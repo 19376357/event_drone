@@ -1,0 +1,12 @@
+# 忽略数据和权重
+datasets/
+weights/
+*.hdf5
+*.npz
+
+# 忽略临时文件
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+*.log
