@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import cv2
 
-def events_to_image(xs, ys, ps, sensor_size=(180, 240), accumulate=True):
+def events_to_image(xs, ys, ps, sensor_size=(260, 346), accumulate=True):
     device = xs.device
     img_size = list(sensor_size)
     img = torch.zeros(img_size, device=device)
@@ -14,7 +14,7 @@ def events_to_image(xs, ys, ps, sensor_size=(180, 240), accumulate=True):
     img.index_put_((ys, xs), ps, accumulate=accumulate)
     return img
 
-def events_to_voxel(xs, ys, ts, ps, num_bins, sensor_size=(460, 346), round_ts=False):
+def events_to_voxel(xs, ys, ts, ps, num_bins, sensor_size=(260, 346), round_ts=False):
     assert len(xs) == len(ys) == len(ts) == len(ps)
     voxel = []
     ts = ts * (num_bins - 1)
@@ -61,16 +61,23 @@ def resize_events(xs, ys, src_shape, dst_shape):
     scale_y = dst_shape[0] / src_shape[0]
     xs_new = xs * scale_x
     ys_new = ys * scale_y
+    # --- 加clip，防止越界 ---
+    xs_new = np.clip(xs_new, 0, dst_shape[1] - 1)
+    ys_new = np.clip(ys_new, 0, dst_shape[0] - 1)
     return xs_new, ys_new
 def resize_image(img, dst_shape):
-    # img: (H, W) or (C, H, W) or (H, W, C)
+    # img: (H, W) or (C, H, W) or (H, W, C) or (N, H, W, C)
     if img.ndim == 2:
         return cv2.resize(img, (dst_shape[1], dst_shape[0]), interpolation=cv2.INTER_LINEAR)
     elif img.ndim == 3:
-        if img.shape[0] == 2:  # (2, H, W) for flow
+        if img.shape[0] == 2 and img.shape[1] != 3:  # (2, H, W) for flow
             return np.stack([cv2.resize(img[0], (dst_shape[1], dst_shape[0]), interpolation=cv2.INTER_LINEAR),
                              cv2.resize(img[1], (dst_shape[1], dst_shape[0]), interpolation=cv2.INTER_LINEAR)], axis=0)
-        else:  # (H, W, C)
+        elif img.shape[2] == 3:  # (H, W, 3)
             return cv2.resize(img, (dst_shape[1], dst_shape[0]), interpolation=cv2.INTER_LINEAR)
+        else:
+            raise ValueError("Unsupported image shape for resize")
+    elif img.ndim == 4 and img.shape[-1] == 3:  # (N, H, W, 3)
+        return np.stack([cv2.resize(im, (dst_shape[1], dst_shape[0]), interpolation=cv2.INTER_LINEAR) for im in img], axis=0)
     else:
         raise ValueError("Unsupported image shape for resize")

@@ -1,6 +1,8 @@
 # 忽略数据和权重
 datasets/
 weights/
+mlruns/
+results_inference/
 *.hdf5
 *.npz
 

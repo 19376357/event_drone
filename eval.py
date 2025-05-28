@@ -1,9 +1,11 @@
 import argparse
-
+import cv2
 import mlflow
 import numpy as np
 import torch
 from torch.optim import *
+import os
+import json
 
 from configs.parser import YAMLParser
 from dataloader.hdf5 import HDF5Dataset
@@ -41,12 +43,12 @@ from utils.visualization import Visualization, vis_activity
 
 def test(args, config_parser):
 
-    #mlflow.set_tracking_uri(args.path_mlflow)
-    #run = mlflow.get_run(args.runid)
-    #config = config_parser.merge_configs(run.data.params)
+    mlflow.set_tracking_uri(args.path_mlflow)
+    mlflow.start_run(run_name="eval LIFFireNet")
+    eval_runid = mlflow.active_run().info.run_id
+    print("New eval runid:", eval_runid)
+
     config = config_parser.config
-
-
 
     # configs
     if config["loader"]["batch_size"] > 1:
@@ -57,10 +59,10 @@ def test(args, config_parser):
 
     if not args.debug:
         # create directory for inference results
-        path_results = create_model_dir(args.path_results, args.runid)
+        path_results = create_model_dir(args.path_results, eval_runid)
 
         # store validation settings
-        eval_id = log_config(path_results, args.runid, config)
+        eval_id = log_config(path_results, eval_runid, config)
     else:
         path_results = None
         eval_id = -1
@@ -76,7 +78,8 @@ def test(args, config_parser):
     # 模型初始化
     model_name = config["model"]["name"]
     model = eval(model_name)(config["model"].copy()).to(device)
-    model = load_model(model_name, model, device, weights_dir="weights")
+    model = load_model(args.runid, model, device)
+    #model = load_model(model_name, model, device, weights_dir="weights")
     model.eval()
 
     # 验证参数
@@ -101,10 +104,10 @@ def test(args, config_parser):
             gt_h5=gt_h5,
             flow_npz=flow_npz,
             voxel_bins=voxel_bins,
-            encoding=encoding,
             resolution=resolution,
             hot_filter=hot_filter,
-            eye=eye
+            eye=eye,
+            config=config
         )
         dataloader = torch.utils.data.DataLoader(
             dataset,
@@ -120,121 +123,146 @@ def test(args, config_parser):
     activity_log = None
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
+            if i == 0 or i == len(dataloader) - 1:
+                continue  # 跳过首尾，因为首尾的事件dt与标签dt可能不一致
             print(f"Batch {i}:")
+            # 支持单目和双目
+            batch_eyes = []
+            if eye == "both":
+                batch_eyes = [("left", batch["left"]), ("right", batch["right"])]
+            else:
+                batch_eyes = [("left", batch)]
 
-            # forward pass
-            x = model(
-                batch["event_voxel"].to(device), batch["event_cnt"].to(device), log=config["vis"]["activity"]
-            )
-            x
-'''
-                # mask flow for visualization
+            # ====== 可视化数据收集 ======
+            vis_data = {}
+            
+            for eye_name, use_batch in batch_eyes:
+                print(f"  Eye: {eye_name}")
+                x = model(
+                    use_batch["event_voxel"].to(device),
+                    use_batch["event_cnt"].to(device),
+                    log=config["vis"]["activity"]
+                )
                 flow_vis = x["flow"][-1].clone()
-                if model.mask:
-                    flow_vis *= inputs["event_mask"].to(device)
-
-                # image of warped events
+                flow_vis *= use_batch["mask"].to(device)
                 iwe = compute_pol_iwe(
                     x["flow"][-1],
-                    inputs["event_list"].to(device),
+                    use_batch["event_list"],
                     config["loader"]["resolution"],
-                    inputs["event_list_pol_mask"][:, :, 0:1].to(device),
-                    inputs["event_list_pol_mask"][:, :, 1:2].to(device),
+                    use_batch["event_list_pol_mask"][:, :, 0:1],
+                    use_batch["event_list_pol_mask"][:, :, 1:2],
                     flow_scaling=config["metrics"]["flow_scaling"],
                     round_idx=True,
                 )
-
+                # 收集可视化数据
+                vis_data[eye_name] = {
+                    "inputs": use_batch,
+                    "flow": flow_vis,
+                    "iwe": iwe,
+                }
                 iwe_window_vis = None
                 events_window_vis = None
                 masked_window_flow_vis = None
-                if "metrics" in config.keys():
 
-                    # event flow association
-                    for metric in criteria:
-                        metric.event_flow_association(x["flow"], inputs)
+                for idx_metric, metric_name in enumerate(config["metrics"]["name"]):
+                    if metric_name == "AEE" and ("flow" not in use_batch or use_batch["flow"].numel() == 0):
+                        continue
+                    # 先做 event_flow_association，对每个metric_name，连接每个idx的事件数据和真值
+                    criteria[idx_metric].event_flow_association(x["flow"], use_batch)
+                    # 如需只评估最终输出
+                    if config["loss"].get("overwrite_intermediate", False):
+                        criteria[idx_metric].overwrite_intermediate_flow(x["flow"])
+                    # 调用已经连接好的criteria进行计算
+                    val_metric = criteria[idx_metric]()
 
-                    # validation
-                    for i, metric in enumerate(config["metrics"]["name"]):
-                        if criteria[i].num_events >= config["data"]["window_eval"]:
+                    # 按文件名累积结果
+                    filenames = use_batch["filename"]
+                    for b in range(len(filenames)):
+                        filename = filenames[b] if isinstance(filenames[b], str) else filenames[b].decode()  # 兼容 bytes
+                        #添加全部文件名
+                        if filename not in val_results:
+                            val_results[filename] = {}
+                            #给每个文件名添加每个metric_name的初始值
+                            for m in config["metrics"]["name"]:
+                                val_results[filename][m] = {"metric": 0, "it": 0}
+                                if m == "AEE":
+                                    val_results[filename][m]["percent"] = 0
+                        val_results[filename][metric_name]["it"] += 1#因为次数初始化是0，所以先+1
+                        if metric_name == "AEE":
+                            val_results[filename][metric_name]["metric"] += val_metric[0][b].item()
+                            val_results[filename][metric_name]["percent"] += val_metric[1][b].item()
+                        else:
+                            val_results[filename][metric_name]["metric"] += val_metric[b].item()
+            
+                    
+                    #添加可视化
+                    if (
+                        idx_metric == 0
+                        and (config["vis"]["enabled"] or config["vis"]["store"])
+                    ):
+                        events_window_vis = criteria[idx_metric].compute_window_events()
+                        iwe_window_vis = criteria[idx_metric].compute_window_iwe()
+                        masked_window_flow_vis = criteria[idx_metric].compute_masked_window_flow()
 
-                            # overwrite intermedia flow estimates with the final ones
-                            if config["loss"]["overwrite_intermediate"]:
-                                criteria[i].overwrite_intermediate_flow(x["flow"])
-                            if metric == "AEE" and inputs["dt_gt"] <= 0.0:
-                                continue
-                            if metric == "AEE":
-                                idx_AEE += 1
-                                if idx_AEE != np.round(1.0 / config["data"]["window"]):
-                                    continue
-
-                            # compute metric
-                            val_metric = criteria[i]()
-                            if metric == "AEE":
-                                idx_AEE = 0
-
-                            # accumulate results
-                            for batch in range(config["loader"]["batch_size"]):
-                                filename = data.files[data.batch_idx[batch] % len(data.files)].split("/")[-1]
-                                if filename not in val_results.keys():
-                                    val_results[filename] = {}
-                                    for metric in config["metrics"]["name"]:
-                                        val_results[filename][metric] = {}
-                                        val_results[filename][metric]["metric"] = 0
-                                        val_results[filename][metric]["it"] = 0
-                                        if metric == "AEE":
-                                            val_results[filename][metric]["percent"] = 0
-
-                                val_results[filename][metric]["it"] += 1
-                                if metric == "AEE":
-                                    val_results[filename][metric]["metric"] += val_metric[0][batch].cpu().numpy()
-                                    val_results[filename][metric]["percent"] += val_metric[1][batch].cpu().numpy()
-                                else:
-                                    val_results[filename][metric]["metric"] += val_metric[batch].cpu().numpy()
-
-                            # visualize
-                            if (
-                                i == 0
-                                and config["data"]["mode"] == "events"
-                                and (config["vis"]["enabled"] or config["vis"]["store"])
-                                and config["data"]["window"] < config["data"]["window_eval"]
-                            ):
-                                events_window_vis = criteria[i].compute_window_events()
-                                iwe_window_vis = criteria[i].compute_window_iwe()
-                                masked_window_flow_vis = criteria[i].compute_masked_window_flow()
-
-                            # reset criteria
-                            criteria[i].reset()
-
+                    # reset criteria
+                    criteria[idx_metric].reset()
                 # visualize
                 if config["vis"]["bars"]:
-                    for bar in data.open_files_bar:
+                    for bar in dataset.open_files_bar:
                         bar.next()
                 if config["vis"]["enabled"]:
-                    vis.update(inputs, flow_vis, iwe, events_window_vis, masked_window_flow_vis, iwe_window_vis)
+                    # 事件
+                    events_left = vis_data["left"]["inputs"]["event_cnt"]
+                    events_right = vis_data["right"]["inputs"]["event_cnt"] if "right" in vis_data else None
+                    # 光流
+                    flow_left = vis_data["left"]["flow"]
+                    flow_right = vis_data["right"]["flow"] if "right" in vis_data else None
+                    # IWE
+                    iwe_left = vis_data["left"]["iwe"]
+                    iwe_right = vis_data["right"]["iwe"] if "right" in vis_data else None
+                    # GT flow
+                    gtflow_left = vis_data["left"]["inputs"]["flow"] if "flow" in vis_data["left"]["inputs"] else None
+                    gtflow_right = vis_data["right"]["inputs"]["flow"] if ("right" in vis_data and "flow" in vis_data["right"]["inputs"]) else None
+                    # frames
+                    frames_left = vis_data["left"]["inputs"]["image"] if "image" in vis_data["left"]["inputs"] else None
+                    frames_right = vis_data["right"]["inputs"]["image"] if ("right" in vis_data and "image" in vis_data["right"]["inputs"]) else None
+
+                    if eye == "both":
+                        vis.update_stereo(
+                            events_left, events_right,
+                            frames_left, frames_right,
+                            flow_left, flow_right,
+                            iwe_left, iwe_right,
+                            gtflow_left, gtflow_right
+                        )
+                    else:
+                        vis.update(
+                            vis_data["left"]["inputs"],
+                            flow_left,
+                            iwe_left,
+                            events_window_vis,
+                            masked_window_flow_vis,
+                            iwe_window_vis
+                        )
                 if config["vis"]["store"]:
-                    sequence = data.files[data.batch_idx[0] % len(data.files)].split("/")[-1].split(".")[0]
+                    sequence = dataset.files[dataset.batch_idx[0] % len(dataset.files)].split("/")[-1].split(".")[0]
                     vis.store(
-                        inputs,
+                        use_batch,
                         flow_vis,
                         iwe,
                         sequence,
                         events_window_vis,
                         masked_window_flow_vis,
                         iwe_window_vis,
-                        ts=data.last_proc_timestamp,
+                        ts=dataset.last_proc_timestamp,
                     )
 
                 # visualize activity
                 if config["vis"]["activity"]:
                     activity_log = vis_activity(x["activity"], activity_log)
-
-            if end_test:
-                break
-
     if config["vis"]["bars"]:
-        for bar in data.open_files_bar:
+        for bar in dataset.open_files_bar:
             bar.finish()
-
     # store validation config and results
     results = {}
     if not args.debug and "metrics" in config.keys():
@@ -248,24 +276,31 @@ def test(args, config_parser):
                     results[metric + "_percent"][key] = str(
                         val_results[key][metric]["percent"] / val_results[key][metric]["it"]
                     )
-            log_results(args.runid, results, path_results, eval_id)
-'''
+            log_results(runid, results, path_results, eval_id)
+    mlflow.log_params(config)
+    mlflow.log_metric("AEE", float(results["AEE"]["mean"]))
+    mlflow.log_metric("FWL", float(results["FWL"]["mean"]))
+    mlflow.end_run()
+
+                     
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    #parser.add_argument("runid", help="mlflow run")
+    parser.add_argument(
+        "--runid",
+        default="LIFFireNet",
+        help="parent mlflow run (optional, for run)",
+    )
     parser.add_argument(
         "--config",
-        default="configs/eval_flow.yml",
+        default="configs/eval.yml",
         help="config file, overwrites mlflow settings",
     )
-    '''
     parser.add_argument(
         "--path_mlflow",
-        default="",
+        default="http://localhost:5000",
         help="location of the mlflow ui",
     )
-    '''
     parser.add_argument("--path_results", default="results_inference/")
     parser.add_argument(
         "--debug",

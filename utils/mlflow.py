@@ -19,9 +19,9 @@ def log_config(path_results, runid, config):
     with open(yaml_filename, "w") as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
 
-    mlflow.start_run(runid)
+    #mlflow.start_run(runid)，在主循环里面start run
     mlflow.log_artifact(yaml_filename)
-    mlflow.end_run()
+    #mlflow.end_run(),同样在主循环里面end run
 
     return eval_id
 
@@ -35,6 +35,6 @@ def log_results(runid, results, path, eval_id):
     with open(yaml_filename, "w") as outfile:
         yaml.dump(results, outfile, default_flow_style=False)
 
-    mlflow.start_run(runid)
+    #mlflow.start_run(runid) 同上
     mlflow.log_artifact(yaml_filename)
-    mlflow.end_run()
+    #mlflow.end_run() 同上

@@ -54,69 +54,27 @@ class EventWarping(torch.nn.Module):
         self._event_mask = None
 
     def event_flow_association(self, flow_list, event_list, pol_mask, event_mask):
-        """
-        :param flow_list: [[batch_size x 2 x H x W]] list of optical flow (x, y) maps
-        :param event_list: [batch_size x N x 4] input events (ts, y, x, p)
-        :param pol_mask: [batch_size x N x 2] polarity mask (pos, neg)
-        :param event_mask: [batch_size x 1 x H x W] event mask
-        """
-
-        # flow vector per input event
-        flow_idx = event_list[:, :, 1:3].clone()
-        flow_idx[:, :, 0] *= self.res[1]  # torch.view is row-major
-        flow_idx = torch.sum(flow_idx, dim=2)
-
-        if self._flow_list is None:
-            self._flow_list = []
-
-        # get flow for every event in the list
-        for i, flow in enumerate(flow_list):
+        # 只保存当前 batch，不做cat/append
+        self._flow_list = []
+        self._flow_maps_x = []
+        self._flow_maps_y = []
+        for flow in flow_list:
+            self._flow_maps_x.append(flow[:, 0:1, :, :])
+            self._flow_maps_y.append(flow[:, 1:2, :, :])
             flow = flow.view(flow.shape[0], 2, -1)
-            event_flowy = torch.gather(flow[:, 1, :], 1, flow_idx.long())  # vertical component
-            event_flowx = torch.gather(flow[:, 0, :], 1, flow_idx.long())  # horizontal component
+            flow_idx = event_list[:, :, 1:3].clone()
+            flow_idx[:, :, 0] *= self.res[1]
+            flow_idx = torch.sum(flow_idx, dim=2)
+            event_flowy = torch.gather(flow[:, 1, :], 1, flow_idx.long())
+            event_flowx = torch.gather(flow[:, 0, :], 1, flow_idx.long())
             event_flowy = event_flowy.view(event_flowy.shape[0], event_flowy.shape[1], 1)
             event_flowx = event_flowx.view(event_flowx.shape[0], event_flowx.shape[1], 1)
             event_flow = torch.cat([event_flowy, event_flowx], dim=2)
-
-            if i == len(self._flow_list):
-                self._flow_list.append(event_flow)
-            else:
-                self._flow_list[i] = torch.cat([self._flow_list[i], event_flow], dim=1)
-
-        # update internal event list
-        if self._event_list is None:
-            self._event_list = event_list
-        else:
-            event_list[:, :, 0:1] += self._passes  # only nonzero second time
-            self._event_list = torch.cat([self._event_list, event_list], dim=1)
-
-        # update internal polarity mask list
-        if self._pol_mask_list is None:
-            self._pol_mask_list = pol_mask
-        else:
-            self._pol_mask_list = torch.cat([self._pol_mask_list, pol_mask], dim=1)
-
-        # update internal smoothing mask
-        if self._event_mask is None:
-            self._event_mask = event_mask
-        else:
-            self._event_mask = torch.cat([self._event_mask, event_mask], dim=1)
-
-        # update flow maps
-        if self._flow_maps_x is None:
-            self._flow_maps_x = []
-            self._flow_maps_y = []
-
-        for i, flow in enumerate(flow_list):
-            if i == len(self._flow_maps_x):
-                self._flow_maps_x.append(flow[:, 0:1, :, :])
-                self._flow_maps_y.append(flow[:, 1:2, :, :])
-            else:
-                self._flow_maps_x[i] = torch.cat([self._flow_maps_x[i], flow[:, 0:1, :, :]], dim=1)
-                self._flow_maps_y[i] = torch.cat([self._flow_maps_y[i], flow[:, 1:2, :, :]], dim=1)
-
-        # update timestamp index
-        self._passes += 1
+            self._flow_list.append(event_flow)
+        self._event_list = event_list
+        self._pol_mask_list = pol_mask
+        self._event_mask = event_mask
+        self._passes = 1
 
     def overwrite_intermediate_flow(self, flow_list):
         """
@@ -338,8 +296,8 @@ class BaseValidationLoss(torch.nn.Module):
         # move to device
         event_list = inputs["event_list"].to(self.device)
         pol_mask = inputs["event_list_pol_mask"].to(self.device)
-        event_mask = inputs["event_mask"].to(self.device)
-        gtflow = inputs["gtflow"].to(self.device) if "gtflow" in inputs.keys() else None
+        event_mask = inputs["mask"].to(self.device)
+        gtflow = inputs["flow"].to(self.device) if "flow" in inputs.keys() else None
 
         # flow vector per input event
         flow_idx = event_list[:, :, 1:3].clone()
@@ -389,7 +347,7 @@ class BaseValidationLoss(torch.nn.Module):
             self._event_mask = torch.cat([self._event_mask, event_mask], dim=1)
 
         # update timestamps
-        self._dt_input = inputs["dt_input"]
+        self._dt_input = inputs["dt"]
         self._dt_gt = inputs["dt_gt"]
 
         # update timestamp index

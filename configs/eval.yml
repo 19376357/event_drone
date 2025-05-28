@@ -1,12 +1,11 @@
 data:
     data_dir: datasets/eval/MVSEC/
     eye: "left"        # 可选：left/right/both
-    encoding: cnt      # cnt 或 voxel
     num_bins: 2       # 体素编码的bin数
     undistort: True   # 是否去畸变
     undistort_dir: "datasets/map/" # 去畸变后的数据存放路径
 model:
-    name: SpikingRecEVFlowNet # for other models available, see models/model.py
+    name: LIFFireNet # for other models available, see models/model.py
     encoding: cnt # voxel;cnt，同上
     round_encoding: False # for voxel encoding
     norm_input: False # normalize input
@@ -33,13 +32,14 @@ loss:
 
 loader:
     batch_size: 1
-    resolution: [260, 346] # H x W
+    resolution: [256, 256] # H x W
     augment: []
     gpu: 0
 
 vis:
     enabled: True
     px: 400
+    delay: 1
     bars: True
     activity: False
     store: False

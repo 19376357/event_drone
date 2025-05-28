@@ -4,7 +4,7 @@ import mlflow
 import pandas as pd
 import torch
 
-'''
+
 def load_model(prev_runid, model, device):
     try:
         run = mlflow.get_run(prev_runid)
@@ -35,12 +35,26 @@ def load_model(model_name, model, device, weights_dir="weights"):
         weights_dir, model_name, "artifacts", "model", "data", "model.pth"
     )
     if os.path.isfile(weight_path):
-        state_dict = torch.load(weight_path, map_location=device)
-        model.load_state_dict(state_dict)
-        print(f"Model weights loaded from {weight_path}\n")
+        try:
+            # 尝试只加载权重
+            state_dict = torch.load(weight_path, map_location=device)
+            if isinstance(state_dict, dict) and "state_dict" in state_dict:
+                state_dict = state_dict["state_dict"]
+            model.load_state_dict(state_dict)
+            print(f"Model weights loaded from {weight_path}\n")
+        except Exception as e:
+            print(f"weights_only load failed: {e}\nTrying with weights_only=False ...")
+            # 明确指定 weights_only=False
+            state_dict = torch.load(weight_path, map_location=device, weights_only=False)
+            if hasattr(state_dict, "state_dict"):
+                model.load_state_dict(state_dict.state_dict())
+            else:
+                model = state_dict  # 直接是模型对象
+            print(f"Model loaded from {weight_path} with weights_only=False\n")
     else:
         print(f"No weights found at {weight_path}, using random initialized model.\n")
     return model
+'''
 
 def create_model_dir(path_results, runid):
     path_results += runid + "/"

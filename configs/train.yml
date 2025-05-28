@@ -2,14 +2,13 @@ experiment: Default
 
 data:
     data_dir: "datasets/train/"
-    eye: "left"        # 可选：left/right/both
-    encoding: cnt      # cnt 或 voxel
+    eye: "left"        # 训练只支持单目
     num_bins: 2        # 体素编码的bin数
     undistort: True   # 是否去畸变
     undistort_dir: "datasets/map/" # 去畸变后的数据存放路径
 
 model:
-    name: SpikingRecEVFlowNet # for other models available, see models/model.py
+    name: LIFFireNet # for other models available, see models/model.py
     encoding: cnt # voxel;cnt，同上
     round_encoding: False # for voxel encoding
     norm_input: False # normalize input
@@ -25,8 +24,6 @@ model:
         learn_thresh: True
         hard_reset: True
 
-
-    
 loss:
     flow_regul_weight: 0.001
     clip_grad: 100.0 # set to Null to disable
@@ -34,11 +31,11 @@ loss:
 
 optimizer:
     name: Adam
-    lr: 0.0002
+    lr: 0 #0.0002
 
 loader:
-    n_epochs: 100
-    batch_size: 8
+    n_epochs: 2
+    batch_size: 1
     resolution: [128, 128] # H x W[260,346]resize[128,128]
     augment: ["Horizontal", "Vertical", "Polarity"] # 旋转，翻转，极性，数据增强
     augment_prob: [0.5, 0.5, 0.5]

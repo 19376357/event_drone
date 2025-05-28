@@ -3,6 +3,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import h5py
+import cv2
+from .utils import ProgressBar  # 确保你有这个类
 
 from .encodings import events_to_voxel, events_to_channels, get_hot_event_mask,undistort_events, resize_events, resize_image
 
@@ -28,20 +30,29 @@ class HDF5Dataset(Dataset):
     """
     支持事件、深度、光流的Dataset,事件数据支持cnt/voxel编码,按深度时间戳切片。
     """
-    def __init__(self, data_h5, gt_h5, flow_npz, voxel_bins=5, encoding='cnt', resolution=(260, 346), hot_filter=None, eye='left', undistort=False, map_dir=None):       
+    def __init__(self, data_h5, gt_h5, flow_npz, voxel_bins=5,  resolution=(260, 346), hot_filter=None, eye='left', undistort=False, map_dir=None,config=None):       
         self.data_h5 = data_h5
         self.gt_h5 = gt_h5
         self.flow_npz = flow_npz
+        self.last_proc_timestamp = 0
         self.voxel_bins = voxel_bins
-        self.encoding = encoding
         self.resolution = resolution
         self.hot_filter = hot_filter or dict(enabled=False)
         self.eye = eye
         self.undistort = undistort
         self.map_dir = map_dir
         self.maps_loaded = False  # 延迟加载
+        self.config = config
         self._init_files()
         self._init_hot_filter()
+
+        # 进度条
+        if self.config and self.config.get("vis", {}).get("bars", False):
+            self.open_files_bar = []
+            # 这里假设每个dataset只对应一个文件
+            max_iters = len(self)  # 或你自定义的 get_iters()
+            filename = os.path.basename(self.data_h5)
+            self.open_files_bar.append(ProgressBar(filename, max=max_iters))
 
     def _load_maps(self):
         # 只在需要时加载
@@ -62,6 +73,13 @@ class HDF5Dataset(Dataset):
         # 事件
         self.events_left = self.data_f['davis/left/events'][:]  # N,4
         self.events_right = self.data_f['davis/right/events'][:]  # N,4
+        #原图像 self.data_f['davis/left/image_raw'][:]
+        #去畸变对齐且与事件融合的特殊图像blended_image_rect
+        self.images_left =  self.data_f['davis/left/image_raw'][:]
+        self.image_left_ts = self.data_f['davis/left/image_raw_ts'][:]
+        self.images_right =  self.data_f['davis/right/image_raw'][:]
+        self.image_right_ts = self.data_f['davis/right/image_raw_ts'][:]
+
         # 深度
         self.depth_left = self.gt_f['davis/left/depth_image_rect'][:]  # T, H, W
         self.depth_right = self.gt_f['davis/right/depth_image_rect'][:]  # T, H, W
@@ -100,7 +118,7 @@ class HDF5Dataset(Dataset):
         # 以left为主，假设left/right长度一致
         return len(self.ts_left)
 
-    def _process_events(self, events, encoding, hot_events, hot_idx):
+    def _process_events(self, events, hot_events, hot_idx):
         if len(events) == 0:
             xs = torch.zeros(1)
             ys = torch.zeros(1)
@@ -112,27 +130,35 @@ class HDF5Dataset(Dataset):
             ts_arr = events[:, 2].astype(np.float32)
             ps = torch.from_numpy(events[:, 3].astype(np.float32)) * 2 - 1
             ts = torch.from_numpy((ts_arr - ts_arr[0]) / (ts_arr[-1] - ts_arr[0]) if ts_arr[-1] > ts_arr[0] else np.zeros_like(ts_arr))
+            if ts.shape[0] > 0:
+                self.last_proc_timestamp = ts[-1]
         # 编码
-            event_cnt = events_to_channels(xs, ys, ps, sensor_size=self.resolution)
-            event_voxel = events_to_voxel(xs, ys, ts, ps, self.voxel_bins, sensor_size=self.resolution)
+        event_cnt = events_to_channels(xs, ys, ps, sensor_size=self.resolution)
+        event_voxel = events_to_voxel(xs, ys, ts, ps, self.voxel_bins, sensor_size=self.resolution)
+        event_list = torch.stack([ts, ys, xs, ps], axis=1)
+        event_list_pol_mask = np.zeros((len(events), 2), dtype=np.float32)
+        event_list_pol_mask[:, 0] = (ps > 0).float()
+        event_list_pol_mask[:, 1] = (ps < 0).float()
+        event_mask = (torch.sum(event_cnt, dim=0) > 0).float()
+
         # 热像素mask
-        mask = None
+        hot_mask = torch.ones(self.resolution)
         if self.hot_filter.get('enabled', False) and event_cnt is not None:
             hot_update = torch.sum(event_cnt, dim=0)
             hot_update[hot_update > 0] = 1
             hot_events += hot_update
             hot_idx += 1
             event_rate = hot_events / hot_idx
-            mask = get_hot_event_mask(
+            hot_mask = get_hot_event_mask(
                 event_rate,
                 hot_idx,
                 max_px=self.hot_filter.get('max_px', 100),
                 min_obvs=self.hot_filter.get('min_obvs', 5),
                 max_rate=self.hot_filter.get('max_rate', 0.8),
             )
-        if mask is None:
-            mask = torch.empty(0)
-        return event_cnt, event_voxel, mask, hot_events, hot_idx
+        if hot_mask is None:
+            hot_mask = torch.empty(0)
+        return event_cnt, event_voxel,event_list,event_list_pol_mask, event_mask, hot_mask, hot_events, hot_idx
 
     def __getitem__(self, idx):
         result = {}
@@ -155,19 +181,40 @@ class HDF5Dataset(Dataset):
                 events[:, 0] = xs
                 events[:, 1] = ys
             # 事件编码
-            event_cnt, event_voxel, mask, self.hot_events_left, self.hot_idx_left = self._process_events(
-                events, self.encoding,self.hot_events_left, self.hot_idx_left
+            event_cnt, event_voxel, event_list, event_list_pol_mask, event_mask, hot_mask, self.hot_events_right, self.hot_idx_right = self._process_events(
+                events, self.hot_events_right, self.hot_idx_right
             )
+            #mask升维
+            mask = (event_mask * hot_mask).unsqueeze(0)  # [1, H, W]
+            #图像取和标签ts最接近的两帧resize（图像帧率比光流和深度真值高）
+            target_ts = self.ts_left[idx]
+            idx_prev = np.searchsorted(self.image_left_ts, target_ts, side='right') - 1
+            idx_prev = np.clip(idx_prev, 0, len(self.image_left_ts) - 1)
+            idx_next = np.searchsorted(self.image_left_ts, target_ts, side='left')
+            idx_next = np.clip(idx_next, 0, len(self.image_left_ts) - 1)
+            image = np.stack([self.images_left[idx_prev], self.images_left[idx_next]], axis=0)
+            image = resize_image(image, self.resolution)
+            image = torch.from_numpy(image).float()
             # 深度resize
             depth = self.depth_left[idx]
             depth = resize_image(depth, self.resolution)
+            # 计算光流时间间隔
+            dt_gt = float(self.ts_left[idx] - self.ts_left[idx-1]) if idx > 0 else 0.05  # 如果是第一个索引，默认0.05s
+            # 计算事件窗口dt
+            dt = float(events[-1, 2] - events[0, 2])#其实和dt_gt相近，可以在下面return时直接和dt_gt一起用0.5
             # 光流resize
             flow = self.flow[idx] if self.flow is not None else torch.empty(0)
             if flow is not None:
                 flow = resize_image(flow, self.resolution)
             result['left'] = {
+                'filename': self.data_h5,#保证之后可以通过filename确定batch来自哪个文件
                 'event_cnt': event_cnt,
                 'event_voxel': event_voxel,
+                'event_list': event_list,
+                'event_list_pol_mask': event_list_pol_mask,
+                'image': image,
+                'dt_gt': dt_gt,
+                'dt': dt,
                 'mask': mask,
                 'depth': torch.from_numpy(depth).float(),
                 'flow': torch.from_numpy(flow).float()
@@ -190,20 +237,38 @@ class HDF5Dataset(Dataset):
                 events[:, 0] = xs
                 events[:, 1] = ys
             # 事件编码
-            event_cnt, event_voxel, mask, self.hot_events_right, self.hot_idx_right = self._process_events(
-                events, self.encoding, self.hot_events_right, self.hot_idx_right
+            event_cnt, event_voxel, event_list, event_list_pol_mask, event_mask, hot_mask, self.hot_events_right, self.hot_idx_right = self._process_events(
+                events, self.hot_events_right, self.hot_idx_right
             )
+            #图像取和标签ts最接近的两帧resize（图像帧率比光流和深度真值高）
+            target_ts = self.ts_right[idx]
+            idx_prev = np.searchsorted(self.image_right_ts, target_ts, side='right') - 1
+            idx_prev = np.clip(idx_prev, 0, len(self.image_right_ts) - 1)
+            idx_next = np.searchsorted(self.image_right_ts, target_ts, side='left')
+            idx_next = np.clip(idx_next, 0, len(self.image_right_ts) - 1)
+            image = np.stack([self.images_right[idx_prev], self.images_right[idx_next]], axis=0)
+            image = resize_image(image, self.resolution)
+            image = torch.from_numpy(image).float()
+            # 计算光流时间间隔
+            dt_gt = float(self.ts_right[idx] - self.ts_right[max(idx-1, 0)])
+            # 计算事件窗口dt
+            dt = float(events[-1, 2] - events[0, 2])
             # 深度resize
             depth = self.depth_right[idx]
             depth = resize_image(depth, self.resolution)
             # 光流resize，MVSEC右相机无光流数据
-            flow = torch.empty(0)  # 用空tensor代替None
+
             result['right'] = {
+                'filename': self.data_h5,#保证之后可以通过filename确定batch来自哪个文件
                 'event_cnt': event_cnt,
                 'event_voxel': event_voxel,
+                'event_list': event_list,
+                'event_list_pol_mask': event_list_pol_mask,
+                'image': image,
+                'dt_gt': dt_gt,
+                'dt': dt,
                 'mask': mask,
                 'depth': torch.from_numpy(depth).float(),
-                'flow': flow
             }
         # 只返回left或right时，直接返回dict['left']或dict['right']
         if self.eye == 'left':

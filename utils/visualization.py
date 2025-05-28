@@ -15,6 +15,7 @@ class Visualization:
 
     def __init__(self, kwargs, eval_id=-1, path_results=None):
         self.img_idx = 0
+        self.vis_delay = kwargs["vis"].get("delay", 1)
         self.px = kwargs["vis"]["px"]
         self.color_scheme = "green_red"  # gray / blue_red / green_red
 
@@ -34,8 +35,8 @@ class Visualization:
         """
 
         events = inputs["event_cnt"] if "event_cnt" in inputs.keys() else None
-        frames = inputs["frames"] if "frames" in inputs.keys() else None
-        gtflow = inputs["gtflow"] if "gtflow" in inputs.keys() else None
+        frames = inputs["image"] if "image" in inputs.keys() else None
+        gtflow = inputs["flow"] if "flow" in inputs.keys() else None
         height = events.shape[2]
         width = events.shape[3]
 
@@ -46,6 +47,7 @@ class Visualization:
         cv2.resizeWindow("Input Events", int(self.px), int(self.px))
         cv2.imshow("Input Events", self.events_to_image(events_npy))
 
+        '''
         # input events
         if events_window is not None:
             events_window = events_window.detach()
@@ -53,6 +55,7 @@ class Visualization:
             cv2.namedWindow("Input Events - Eval window", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Input Events - Eval window", int(self.px), int(self.px))
             cv2.imshow("Input Events - Eval window", self.events_to_image(events_window_npy))
+        '''
 
         # input frames
         if frames is not None:
@@ -74,7 +77,8 @@ class Visualization:
             cv2.namedWindow("Estimated Flow", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Estimated Flow", int(self.px), int(self.px))
             cv2.imshow("Estimated Flow", flow_npy)
-
+        
+        '''
         # optical flow
         if masked_window_flow is not None:
             masked_window_flow = masked_window_flow.detach()
@@ -86,6 +90,7 @@ class Visualization:
             cv2.namedWindow("Estimated Flow - Eval window", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Estimated Flow - Eval window", int(self.px), int(self.px))
             cv2.imshow("Estimated Flow - Eval window", masked_window_flow_npy)
+        '''
 
         # ground-truth optical flow
         if gtflow is not None:
@@ -105,7 +110,7 @@ class Visualization:
             cv2.namedWindow("Image of Warped Events", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Image of Warped Events", int(self.px), int(self.px))
             cv2.imshow("Image of Warped Events", iwe_npy)
-
+        '''
         # image of warped events - evaluation window
         if iwe_window is not None:
             iwe_window = iwe_window.detach()
@@ -114,8 +119,138 @@ class Visualization:
             cv2.namedWindow("Image of Warped Events - Eval window", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Image of Warped Events - Eval window", int(self.px), int(self.px))
             cv2.imshow("Image of Warped Events - Eval window", iwe_window_npy)
+        '''
 
-        cv2.waitKey(1)
+        cv2.waitKey(self.vis_delay)
+    def update_stereo(
+        self,
+        events_left, events_right,
+        frames_left, frames_right,
+        flow_left, flow_right,
+        iwe_left, iwe_right,
+        gtflow_left, gtflow_right
+    ):
+        # 事件拼接
+        def get_events_img(events):
+            if events is None:
+                return None
+            events = events.detach()
+            h, w = events.shape[2], events.shape[3]
+            events_npy = events.cpu().numpy().transpose(0, 2, 3, 1).reshape((h, w, -1))
+            return self.events_to_image(events_npy)
+
+        img_events_left = get_events_img(events_left)
+        img_events_right = get_events_img(events_right)
+        if img_events_left is not None and img_events_right is not None:
+            img_events = np.concatenate([img_events_left, img_events_right], axis=1)
+            cv2.namedWindow("Input Events (Left | Right)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Input Events (Left | Right)", int(2 * self.px), int(self.px))
+            cv2.imshow("Input Events (Left | Right)", img_events)
+
+        # frames拼接（每个相机先拼前后帧，再横向拼接左右）
+        def get_frames_img(frames):
+            if frames is None:
+                return None
+            frames = frames.detach().cpu().numpy()
+            if frames.ndim == 5 and frames.shape[0] == 1:  # [B, 2, H, W, C]
+                frames_npy = frames[0]
+            elif frames.ndim == 4 and frames.shape[0] == 1:
+                frames_npy = frames[0]
+            else:
+                frames_npy = frames
+            if frames_npy.shape[0] != 2:
+                print(f"Warning: frames shape {frames_npy.shape}, expect first dim=2")
+                return None
+            # [2, H, W, C] or [2, H, W]
+            if frames_npy.ndim == 4 and frames_npy.shape[-1] == 1:  # 灰度
+                frame0 = np.squeeze(frames_npy[0], axis=-1)
+                frame1 = np.squeeze(frames_npy[1], axis=-1)
+                img = np.concatenate([frame0, frame1], axis=1)
+            elif frames_npy.ndim == 4:  # 彩色
+                frame0 = frames_npy[0]
+                frame1 = frames_npy[1]
+                img = np.concatenate([frame0, frame1], axis=1)
+            elif frames_npy.ndim == 3:  # 灰度
+                frame0 = frames_npy[0]
+                frame1 = frames_npy[1]
+                img = np.concatenate([frame0, frame1], axis=1)
+            else:
+                return None
+            # 归一化
+            if img.max() > 1.1:
+                img = img / 255.0
+            return img
+
+        img_frames_left = get_frames_img(frames_left)
+        img_frames_right = get_frames_img(frames_right)
+        if img_frames_left is not None and img_frames_right is not None:
+            img_frames = np.concatenate([img_frames_left, img_frames_right], axis=1)
+            cv2.namedWindow("Input Frames (Prev/Curr) (Left | Right)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Input Frames (Prev/Curr) (Left | Right)", int(4 * self.px), int(self.px))
+            cv2.imshow("Input Frames (Prev/Curr) (Left | Right)", img_frames)
+
+        # 光流拼接
+        def get_flow_img(flow):
+            if flow is None:
+                return None
+            flow = flow.detach()
+            h, w = flow.shape[2], flow.shape[3]
+            flow_npy = flow.cpu().numpy().transpose(0, 2, 3, 1).reshape((h, w, 2))
+            flow_npy = self.flow_to_image(flow_npy[:, :, 0], flow_npy[:, :, 1])
+            flow_npy = cv2.cvtColor(flow_npy, cv2.COLOR_RGB2BGR)
+            return flow_npy
+
+        img_flow_left = get_flow_img(flow_left)
+        img_flow_right = get_flow_img(flow_right)
+        if img_flow_left is not None and img_flow_right is not None:
+            img_flow = np.concatenate([img_flow_left, img_flow_right], axis=1)
+            cv2.namedWindow("Estimated Flow (Left | Right)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Estimated Flow (Left | Right)", int(2 * self.px), int(self.px))
+            cv2.imshow("Estimated Flow (Left | Right)", img_flow)
+
+        # GT flow拼接
+        def get_gtflow_img(gtflow):
+            if gtflow is None or gtflow.numel() == 0:
+                return None
+            gtflow = gtflow.detach()
+            h, w = gtflow.shape[2], gtflow.shape[3]
+            gtflow_npy = gtflow.cpu().numpy().transpose(0, 2, 3, 1).reshape((h, w, 2))
+            gtflow_npy = self.flow_to_image(gtflow_npy[:, :, 0], gtflow_npy[:, :, 1])
+            gtflow_npy = cv2.cvtColor(gtflow_npy, cv2.COLOR_RGB2BGR)
+            return gtflow_npy
+
+        img_gtflow_left = get_gtflow_img(gtflow_left)
+        img_gtflow_right = get_gtflow_img(gtflow_right)
+        if img_gtflow_left is not None and img_gtflow_right is not None:
+            img_gtflow = np.concatenate([img_gtflow_left, img_gtflow_right], axis=1)
+            cv2.namedWindow("Ground-truth Flow (Left | Right)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Ground-truth Flow (Left | Right)", int(2 * self.px), int(self.px))
+            cv2.imshow("Ground-truth Flow (Left | Right)", img_gtflow)
+        elif img_gtflow_left is not None:
+            cv2.namedWindow("Ground-truth Flow (Left)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Ground-truth Flow (Left)", int(self.px), int(self.px))
+            cv2.imshow("Ground-truth Flow (Left)", img_gtflow_left)
+
+        # IWE拼接
+        def get_iwe_img(iwe):
+            if iwe is None:
+                return None
+            iwe = iwe.detach()
+            h, w = iwe.shape[2], iwe.shape[3]
+            iwe_npy = iwe.cpu().numpy().transpose(0, 2, 3, 1).reshape((h, w, 2))
+            iwe_npy = self.events_to_image(iwe_npy)
+            return iwe_npy
+
+        img_iwe_left = get_iwe_img(iwe_left)
+        img_iwe_right = get_iwe_img(iwe_right)
+        if img_iwe_left is not None and img_iwe_right is not None:
+            img_iwe = np.concatenate([img_iwe_left, img_iwe_right], axis=1)
+            cv2.namedWindow("Image of Warped Events (Left | Right)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Image of Warped Events (Left | Right)", int(2 * self.px), int(self.px))
+            cv2.imshow("Image of Warped Events (Left | Right)", img_iwe)
+
+        cv2.waitKey(self.vis_delay)
+
 
     def store(self, inputs, flow, iwe, sequence, events_window=None, masked_window_flow=None, iwe_window=None, ts=None):
         """
@@ -224,7 +359,7 @@ class Visualization:
             self.store_file.flush()
 
         self.img_idx += 1
-        cv2.waitKey(1)
+        cv2.waitKey(self.vis_delay)
 
     @staticmethod
     def flow_to_image(flow_x, flow_y):
