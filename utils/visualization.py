@@ -37,6 +37,8 @@ class Visualization:
         events = inputs["event_cnt"] if "event_cnt" in inputs.keys() else None
         frames = inputs["image"] if "image" in inputs.keys() else None
         gtflow = inputs["flow"] if "flow" in inputs.keys() else None
+        gtflow_mask = gtflow * inputs["mask"].to(gtflow.device) if "gtflow" in inputs.keys() else None
+
         height = events.shape[2]
         width = events.shape[3]
 
@@ -67,7 +69,29 @@ class Visualization:
             cv2.namedWindow("Input Frames (Prev/Curr)", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Input Frames (Prev/Curr)", int(2 * self.px), int(self.px))
             cv2.imshow("Input Frames (Prev/Curr)", frame_image)
-
+        # Farneback 光流可视化
+        if frames is not None:
+            # frames: [1, H, W, 2]，第0通道为前帧，第1通道为当前帧
+            frames_npy = frames.detach().cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, 2))
+            prev_img = (frames_npy[:, :, 0] * 255).astype(np.uint8)
+            curr_img = (frames_npy[:, :, 1] * 255).astype(np.uint8)
+            # OpenCV 要求输入为 uint8
+            flow_fb = cv2.calcOpticalFlowFarneback(
+                prev_img, curr_img,
+                None,
+                pyr_scale=0.5,
+                levels=3,
+                winsize=15,
+                iterations=3,
+                poly_n=5,
+                poly_sigma=1.2,
+                flags=0
+            )  # [H, W, 2]
+            flow_fb_img = self.flow_to_image(flow_fb[..., 0], flow_fb[..., 1])
+            flow_fb_img = cv2.cvtColor(flow_fb_img, cv2.COLOR_RGB2BGR)
+            cv2.namedWindow("Farneback Flow", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Farneback Flow", int(self.px), int(self.px))
+            cv2.imshow("Farneback Flow", flow_fb_img)
         # optical flow
         if flow is not None:
             flow = flow.detach()
@@ -101,6 +125,35 @@ class Visualization:
             cv2.namedWindow("Ground-truth Flow", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Ground-truth Flow", int(self.px), int(self.px))
             cv2.imshow("Ground-truth Flow", gtflow_npy)
+        if gtflow_mask is not None:
+            gtflow_mask = gtflow_mask.detach()
+            gtflow_mask_npy = gtflow_mask.cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, 2))
+            gtflow_mask_npy = self.flow_to_image(gtflow_mask_npy[:, :, 0], gtflow_mask_npy[:, :, 1])
+            gtflow_mask_npy = cv2.cvtColor(gtflow_mask_npy, cv2.COLOR_RGB2BGR)
+            cv2.namedWindow("Ground-truth Flow_mask", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Ground-truth Flow_mask", int(self.px), int(self.px))
+            cv2.imshow("Ground-truth Flow_mask", gtflow_mask_npy)
+
+        # 预测光流箭头
+        if flow is not None and frames is not None:
+            # 取当前帧灰度图
+            frame_img = frames[0, 0].cpu().numpy() / 255.0   
+            flow_vis = flow.detach().cpu().numpy()[0].transpose(1, 2, 0)  # [H, W, 2]
+            img_arrow = self.get_arrow_img(frame_img, flow_vis, step=16, norm=True)
+            cv2.namedWindow("Predicted Flow Arrows", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Predicted Flow Arrows", int(self.px), int(self.px))
+            cv2.imshow("Predicted Flow Arrows", img_arrow) 
+        
+        # 真值光流箭头_默认带mask
+        if gtflow_mask is not None and frames is not None:
+            frame_img = frames[0, 0].cpu().numpy() / 255.0  # [H, W]
+            gtflow_vis = gtflow_mask.detach().cpu().numpy()[0].transpose(1, 2, 0)  # [H, W, 2]
+            img_gt_arrow = self.get_arrow_img(frame_img, gtflow_vis, step=16, norm=True)
+            cv2.namedWindow("GT Flow Arrows", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("GT Flow Arrows", int(self.px), int(self.px))
+            cv2.imshow("GT Flow Arrows", img_gt_arrow)
+
+        
 
         # image of warped events
         if iwe is not None:
@@ -128,7 +181,8 @@ class Visualization:
         frames_left, frames_right,
         flow_left, flow_right,
         iwe_left, iwe_right,
-        gtflow_left, gtflow_right
+        gtflow_left, gtflow_right,
+        inputs
     ):
         # 事件拼接
         def get_events_img(events):
@@ -207,6 +261,38 @@ class Visualization:
             cv2.namedWindow("Estimated Flow (Left | Right)", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Estimated Flow (Left | Right)", int(2 * self.px), int(self.px))
             cv2.imshow("Estimated Flow (Left | Right)", img_flow)
+        # 光流箭头拼接
+        def get_arrow_img(frames, flow):
+            if frames is None or flow is None:
+                return None
+            # 取当前帧灰度图
+            frame_img = frames[0, 0].cpu().numpy() / 255.0  # [H, W]
+            flow_vis = flow.detach().cpu().numpy()[0].transpose(1, 2, 0)  # [H, W, 2]
+            return self.get_arrow_img(frame_img, flow_vis, step=16, norm=True)
+        img_arrow_left = get_arrow_img(frames_left, flow_left)
+        img_arrow_right = get_arrow_img(frames_right, flow_right)
+        if img_arrow_left is not None and img_arrow_right is not None:
+            img_arrow = np.concatenate([img_arrow_left, img_arrow_right], axis=1)
+            cv2.namedWindow("Estimated Flow Arrows (Left | Right)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Estimated Flow Arrows (Left | Right)", int(2 * self.px), int(self.px))
+            cv2.imshow("Estimated Flow Arrows (Left | Right)", img_arrow)
+        
+
+        #光流真值箭头拼接:
+        def get_gt_arrow_img(frames, gtflow):
+            if frames is None or gtflow is None or gtflow.numel() == 0:
+                return None
+            frame_img = frames[0, 0].cpu().numpy() / 255.0
+            gtflow_vis = gtflow.detach().cpu().numpy()[0].transpose(1, 2, 0)
+            return self.get_arrow_img(frame_img, gtflow_vis, step=16, norm=True)
+        
+        gtflow_mask_left = gtflow_left * inputs["mask"].to(gtflow_left.device)
+        img_gt_arrow_left = get_gt_arrow_img(frames_left, gtflow_mask_left)
+        if img_gt_arrow_left is not None:
+            cv2.namedWindow("GT Flow Arrows (Left)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("GT Flow Arrows (Left)", int(self.px), int(self.px))
+            cv2.imshow("GT Flow Arrows (Left)", img_gt_arrow_left)
+
 
         # GT flow拼接
         def get_gtflow_img(gtflow):
@@ -220,16 +306,16 @@ class Visualization:
             return gtflow_npy
 
         img_gtflow_left = get_gtflow_img(gtflow_left)
-        img_gtflow_right = get_gtflow_img(gtflow_right)
-        if img_gtflow_left is not None and img_gtflow_right is not None:
-            img_gtflow = np.concatenate([img_gtflow_left, img_gtflow_right], axis=1)
-            cv2.namedWindow("Ground-truth Flow (Left | Right)", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Ground-truth Flow (Left | Right)", int(2 * self.px), int(self.px))
-            cv2.imshow("Ground-truth Flow (Left | Right)", img_gtflow)
-        elif img_gtflow_left is not None:
+        gtflow_mask_left = gtflow_left * inputs["mask"].to(gtflow_left.device)
+        img_gtflow_mask_left = get_gtflow_img(gtflow_mask_left)
+        if img_gtflow_left is not None:
             cv2.namedWindow("Ground-truth Flow (Left)", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Ground-truth Flow (Left)", int(self.px), int(self.px))
             cv2.imshow("Ground-truth Flow (Left)", img_gtflow_left)
+        if img_gtflow_mask_left is not None:
+            cv2.namedWindow("Ground-truth Flow_mask (Left)", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Ground-truth Flow_mask (Left)", int(self.px), int(self.px))
+            cv2.imshow("Ground-truth Flow_mask (Left)", img_gtflow_mask_left)
 
         # IWE拼接
         def get_iwe_img(iwe):
@@ -448,6 +534,31 @@ class Visualization:
             event_image[:, :, 1][mask_neg * mask_not_pos] = 0
 
         return event_image
+    @staticmethod
+    def get_arrow_img(im, flow, step=40, norm=True):
+        # im: [H, W] 或 [H, W, 3]，灰度或BGR图像
+        # flow: [H, W, 2]
+        h, w = im.shape[:2]
+        y, x = np.mgrid[step//2:h:step, step//2:w:step].reshape(2, -1).astype(int)
+        fx, fy = flow[y, x].T
+        if norm:
+            mag = np.sqrt(fx**2 + fy**2)
+            max_mag = np.max(mag)
+            if max_mag > 1e-6:
+                fx = fx / max_mag * step // 2
+                fy = fy / max_mag * step // 2
+        ex = x + fx
+        ey = y + fy
+        lines = np.vstack([x, y, ex, ey]).T.reshape(-1, 2, 2)
+        lines = lines.astype(np.int32)
+        if im.ndim == 2:
+            vis = cv2.cvtColor((im * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        else:
+            vis = (im * 255).astype(np.uint8).copy()
+        for (x1, y1), (x2, y2) in lines:
+            cv2.line(vis, (x1, y1), (x2, y2), (0, 0, 255), 2, lineType=cv2.LINE_AA)
+            cv2.circle(vis, (x1, y1), 1, (0, 255, 0), -1, lineType=cv2.LINE_AA)
+        return vis
 
 
 def vis_activity(activity, activity_log):

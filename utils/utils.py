@@ -16,7 +16,7 @@ def load_model(prev_runid, model, device):
         model_dir = model_dir[7:]
 
     if os.path.isfile(model_dir):
-        model_loaded = torch.load(model_dir, map_location=device)
+        model_loaded = torch.load(model_dir, map_location=device, weights_only=False)
         model.load_state_dict(model_loaded.state_dict())
         print("Model restored from " + prev_runid + "\n")
     else:

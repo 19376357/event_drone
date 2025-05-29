@@ -44,6 +44,7 @@ from utils.visualization import Visualization, vis_activity
 def test(args, config_parser):
 
     mlflow.set_tracking_uri(args.path_mlflow)
+    mlflow.set_experiment("eval_experiment")
     mlflow.start_run(run_name="eval LIFFireNet")
     eval_runid = mlflow.active_run().info.run_id
     print("New eval runid:", eval_runid)
@@ -69,7 +70,6 @@ def test(args, config_parser):
 
     # 初始设置
     device = config_parser.device
-    kwargs = config_parser.loader_kwargs
 
     # 可视化工具
     if config["vis"]["enabled"] or config["vis"]["store"]:
@@ -91,7 +91,6 @@ def test(args, config_parser):
     # 数据加载
     data_dir = config["data"]["data_dir"]
     eye = config["data"].get("eye", "left")
-    encoding = config["data"].get("encoding", "cnt")
     voxel_bins = config["data"].get("num_bins", 5)
     resolution = tuple(config["loader"].get("resolution", [260, 346]))
     hot_filter = config.get("hot_filter", {})
@@ -117,9 +116,7 @@ def test(args, config_parser):
         )
 
     # 验证循环
-    idx_AEE = 0
     val_results = {}
-    end_test = False
     activity_log = None
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
@@ -233,7 +230,8 @@ def test(args, config_parser):
                             frames_left, frames_right,
                             flow_left, flow_right,
                             iwe_left, iwe_right,
-                            gtflow_left, gtflow_right
+                            gtflow_left, gtflow_right,
+                            vis_data["left"]["inputs"]
                         )
                     else:
                         vis.update(
@@ -276,10 +274,19 @@ def test(args, config_parser):
                     results[metric + "_percent"][key] = str(
                         val_results[key][metric]["percent"] / val_results[key][metric]["it"]
                     )
-            log_results(runid, results, path_results, eval_id)
+            log_results(eval_runid, results, path_results, eval_id)
     mlflow.log_params(config)
-    mlflow.log_metric("AEE", float(results["AEE"]["mean"]))
-    mlflow.log_metric("FWL", float(results["FWL"]["mean"]))
+    aee_values = [float(v) for v in results["AEE"].values()]
+    aee_mean = sum(aee_values) / len(aee_values) if aee_values else 0.0
+
+    fwl_values = [float(v) for v in results["FWL"].values()]
+    fwl_mean = sum(fwl_values) / len(fwl_values) if fwl_values else 0.0
+
+    rsat_values = [float(v) for v in results["RSAT"].values()]
+    rsat_mean = sum(rsat_values) / len(rsat_values) if rsat_values else 0.0
+    mlflow.log_metric("AEE", aee_mean)
+    mlflow.log_metric("FWL", fwl_mean)
+    mlflow.log_metric("RSAT", rsat_mean)
     mlflow.end_run()
 
                      
