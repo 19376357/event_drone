@@ -6,7 +6,7 @@ import cv2
 def events_to_image(xs, ys, ps, sensor_size=(260, 346), accumulate=True):
     device = xs.device
     img_size = list(sensor_size)
-    img = torch.zeros(img_size, device=device)
+    img = torch.zeros(img_size, device=device, dtype=ps.dtype)
     if xs.dtype is not torch.long:
         xs = xs.long()
     if ys.dtype is not torch.long:

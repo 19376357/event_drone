@@ -1,0 +1,45 @@
+data:
+    data_dir: datasets/eval/MVSEC/
+    eye: "left"        # 可选：left/right/both
+    num_bins: 2       # 体素编码的bin数
+    undistort: False  # 是否去畸变
+    undistort_dir: "datasets/map/" # 去畸变后的数据存放路径
+
+model:
+    'name': 'EVFlowNet'
+    'encoding': 'cnt'
+    'round_encoding': False 
+    'norm_input': False 
+    'num_bins': 2 
+    'base_num_channels': 32 
+    'kernel_size': 3 
+    'mask_output': True
+    spiking_neuron: None
+
+metrics:
+    name: [FWL, RSAT, AEE]  # FWL, RSAT, AEE
+    flow_scaling: 128 # depends on the training dataset
+
+loss:
+    flow_regul_weight: 0.001
+    clip_grad: 100.0 # set to Null to disable
+    overwrite_intermediate: False
+
+loader:
+    batch_size: 1
+    resolution: [180, 240] # H x W
+    augment: []
+    gpu: 0
+
+vis:
+    enabled: True
+    px: 400
+    bars: True
+    activity: False
+    store: False
+
+hot_filter:
+    enabled: True
+    max_px: 100
+    min_obvs: 5
+    max_rate: 0.8

@@ -1,0 +1,8 @@
+AEE:
+  datasets/eval/MVSEC/indoor_flying4_data.hdf5: '4.276113039593107'
+AEE_percent:
+  datasets/eval/MVSEC/indoor_flying4_data.hdf5: '0.5007991592953949'
+FWL:
+  datasets/eval/MVSEC/indoor_flying4_data.hdf5: '1.0483603127223928'
+RSAT:
+  datasets/eval/MVSEC/indoor_flying4_data.hdf5: nan

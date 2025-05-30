@@ -87,6 +87,7 @@ def interpolate(idx, weights, res, polarity_mask=None):
     if polarity_mask is not None:
         weights = weights * polarity_mask
     iwe = torch.zeros((idx.shape[0], res[0] * res[1], 1)).to(idx.device)
+    weights = weights.to(iwe.dtype)
     iwe = iwe.scatter_add_(1, idx.long(), weights)
     iwe = iwe.view((idx.shape[0], 1, res[0], res[1]))
     return iwe

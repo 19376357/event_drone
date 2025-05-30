@@ -534,7 +534,13 @@ class RSAT(BaseValidationLoss):
         zero_nonzero_px = zero_nonzero_px.view(zero_nonzero_px.shape[0], -1)
         zero_ts_sum /= torch.sum(zero_nonzero_px, dim=1)
 
-        return fw_ts_sum / zero_ts_sum
+        # 防止分母为0
+        zero_ts_sum_safe = zero_ts_sum.clone()
+        zero_ts_sum_safe[zero_ts_sum_safe == 0] = 1
+        rsat = fw_ts_sum / zero_ts_sum_safe
+        rsat[zero_ts_sum == 0] = 0  # 或 float('nan')
+
+        return rsat
 
 
 class AEE(BaseValidationLoss):

@@ -1,0 +1,4 @@
+FWL:
+  datasets/test/test_data.hdf5: '1.034339486012705'
+RSAT:
+  datasets/test/test_data.hdf5: '0.21687081922694904'

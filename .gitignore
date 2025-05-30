@@ -2,7 +2,9 @@
 datasets/
 weights/
 mlruns/
+mlartifact/
 results_inference/
+results_test/
 *.hdf5
 *.npz
 

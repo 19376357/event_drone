@@ -1,5 +1,5 @@
 import os
-
+import torch
 import cv2
 import matplotlib
 import matplotlib.pyplot as plt
@@ -37,7 +37,7 @@ class Visualization:
         events = inputs["event_cnt"] if "event_cnt" in inputs.keys() else None
         frames = inputs["image"] if "image" in inputs.keys() else None
         gtflow = inputs["flow"] if "flow" in inputs.keys() else None
-        gtflow_mask = gtflow * inputs["mask"].to(gtflow.device) if "gtflow" in inputs.keys() else None
+        gtflow_mask = gtflow * inputs["mask"].to(gtflow.device) if "flow" in inputs.keys() else None
 
         height = events.shape[2]
         width = events.shape[3]
@@ -71,22 +71,11 @@ class Visualization:
             cv2.imshow("Input Frames (Prev/Curr)", frame_image)
         # Farneback 光流可视化
         if frames is not None:
-            # frames: [1, H, W, 2]，第0通道为前帧，第1通道为当前帧
-            frames_npy = frames.detach().cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, 2))
-            prev_img = (frames_npy[:, :, 0] * 255).astype(np.uint8)
-            curr_img = (frames_npy[:, :, 1] * 255).astype(np.uint8)
-            # OpenCV 要求输入为 uint8
-            flow_fb = cv2.calcOpticalFlowFarneback(
-                prev_img, curr_img,
-                None,
-                pyr_scale=0.5,
-                levels=3,
-                winsize=15,
-                iterations=3,
-                poly_n=5,
-                poly_sigma=1.2,
-                flags=0
-            )  # [H, W, 2]
+            flow_fb_tensor = self.get_farneback_flow_img(frames, height, width)
+            if "mask" in inputs.keys():
+                flow_fb_tensor = flow_fb_tensor.to(inputs["mask"].device, dtype=inputs["mask"].dtype)
+                flow_fb_tensor = flow_fb_tensor * inputs["mask"]
+            flow_fb = flow_fb_tensor.cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, 2))
             flow_fb_img = self.flow_to_image(flow_fb[..., 0], flow_fb[..., 1])
             flow_fb_img = cv2.cvtColor(flow_fb_img, cv2.COLOR_RGB2BGR)
             cv2.namedWindow("Farneback Flow", cv2.WINDOW_NORMAL)
@@ -535,6 +524,27 @@ class Visualization:
 
         return event_image
     @staticmethod
+    def get_farneback_flow_img(frames,height,width):
+        # frames: [1, H, W, 2]，第0通道为前帧，第1通道为当前帧
+        frames_npy = frames.detach().cpu().numpy().transpose(0, 2, 3, 1).reshape((height,width, 2))
+        prev_img = (frames_npy[:, :, 0] * 255).astype(np.uint8)
+        curr_img = (frames_npy[:, :, 1] * 255).astype(np.uint8)
+        # OpenCV 要求输入为 uint8
+        flow_fb = cv2.calcOpticalFlowFarneback(
+            prev_img, curr_img,
+            None,
+            pyr_scale=0.5,
+            levels=3,
+            winsize=15,
+            iterations=3,
+            poly_n=5,
+            poly_sigma=1.2,
+            flags=0
+        )
+        flow_fb_tensor = torch.from_numpy(flow_fb).permute(2, 0, 1).unsqueeze(0)
+        flow_fb_tensor = flow_fb_tensor.to(frames.device, frames.dtype)
+        return flow_fb_tensor
+    @staticmethod
     def get_arrow_img(im, flow, step=40, norm=True):
         # im: [H, W] 或 [H, W, 3]，灰度或BGR图像
         # flow: [H, W, 2]
@@ -582,7 +592,7 @@ def vis_activity(activity, activity_log):
 
     # plot data
     if not lines:
-        for name, data in df.iteritems():
+        for name, data in df.items():
             ax.plot(data.index.to_numpy(), data.to_numpy(), label=name)
         ax.grid()
         ax.legend()

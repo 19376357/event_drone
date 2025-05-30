@@ -91,7 +91,7 @@ def test(args, config_parser):
     # 数据加载
     data_dir = config["data"]["data_dir"]
     voxel_bins = config["data"].get("num_bins", 5)
-    resolution = tuple(config["loader"].get("resolution", [260, 346]))
+    resolution = tuple(config["loader"].get("resolution"))
     hot_filter = config.get("hot_filter", {})
     triplets = simfind_data_triplets(data_dir)
     print(f"共找到{len(triplets)}组数据文件。")

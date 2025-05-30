@@ -127,7 +127,7 @@ class HDF5Dataset(Dataset):
         else:
             xs = torch.from_numpy(events[:, 0].astype(np.float32))
             ys = torch.from_numpy(events[:, 1].astype(np.float32))
-            ts_arr = events[:, 2].astype(np.float32)
+            ts_arr = events[:, 2].astype(np.float64)
             ps = torch.from_numpy(events[:, 3].astype(np.float32)) * 2 - 1
             ts = torch.from_numpy((ts_arr - ts_arr[0]) / (ts_arr[-1] - ts_arr[0]) if ts_arr[-1] > ts_arr[0] else np.zeros_like(ts_arr))
             if ts.shape[0] > 0:

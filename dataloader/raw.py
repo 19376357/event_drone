@@ -5,11 +5,14 @@ from torch.utils.data import Dataset
 import h5py
 import cv2
 from .utils import ProgressBar  # 确保你有这个类
-
+import hdf5plugin
 from .encodings import events_to_voxel, events_to_channels, get_hot_event_mask,undistort_events, resize_events, resize_image
 
 def simfind_data_triplets(data_dir):
-    data_files = sorted([f for f in os.listdir(data_dir) if f.endswith('_data.hdf5')])
+    data_files = sorted([
+        f for f in os.listdir(data_dir)
+        if f.endswith('.h5') or f.endswith('.hdf5')
+    ])
     triplets = []
     for data_f in data_files:
         triplets.append(os.path.join(data_dir, data_f))
@@ -19,7 +22,7 @@ class simHDF5Dataset(Dataset):
     """
     支持事件、深度、光流的Dataset,事件数据支持cnt/voxel编码,按深度时间戳切片。
     """
-    def __init__(self, data_h5, voxel_bins=5,  resolution=(960, 1240), hot_filter=None, config=None,t=0.05):       
+    def __init__(self, data_h5, voxel_bins=5,  resolution=(960, 1240), hot_filter=None, config=None,t=0.02):       
         self.data_h5 = data_h5
         self.last_proc_timestamp = 0 
         self.voxel_bins = voxel_bins
@@ -43,21 +46,57 @@ class simHDF5Dataset(Dataset):
     def _init_files(self):
         self.data_f = h5py.File(self.data_h5, 'r')
         # 事件
-        self.events_left = self.data_f['CD']['events'][:]  # N,4
-        # 如果是结构化数组，转为普通二维float32数组
-        #还需要保证是x,y,p,t而不是x,y,t,p
-        if self.events_left.dtype.fields is not None:
-            self.events_left = np.stack([
-                self.events_left['x'],
-                self.events_left['y'],
-                self.events_left['p'],
-                self.events_left['t']/1000000.0  # 转为秒
-            ], axis=-1).astype(np.float32)
-        if self.events_left.ndim == 1 and self.events_left.shape[0] % 4 == 0:
-            self.events_left = self.events_left.reshape(-1, 4)
+        if 'CD' in self.data_f:
+            self.events_left = self.data_f['CD']['events'][:]  # N,4  # N,4
+            # 如果是结构化数组，转为普通二维float64数组
+            #还需要保证是x,y,p,t而不是x,y,t,p
+            if self.events_left.dtype.fields is not None:
+                self.events_left = np.stack([
+                    self.events_left['x'].astype(np.float32),
+                    self.events_left['y'].astype(np.float32),
+                    self.events_left['p'].astype(np.float32),
+                    (self.events_left['t']/1000000.0).astype(np.float64)  # 转为秒
+                ], axis=-1)
+            if self.events_left.ndim == 1 and self.events_left.shape[0] % 4 == 0:
+                self.events_left = self.events_left.reshape(-1, 4)
+        elif 'events' in self.data_f and isinstance(self.data_f['events'], h5py.Group):
+            group = self.data_f['events']
+            N = group['x'].shape[0]  # 总事件数
+            half = N // 2
+            if all(k in group for k in ['x', 'y', 't', 'p']):
+                x = group['x'][:half]
+                y = group['y'][:half]
+                t = group['t'][:half]
+                p = group['p'][:half]
+                self.events_left = np.stack([
+                    x.astype(np.float32),
+                    y.astype(np.float32),
+                    p.astype(np.float32),
+                    (t.astype(np.float64) / 1_000_000.0)
+            ], axis=-1)
+        elif 'events' in self.data_f and isinstance(self.data_f['events'], h5py.Dataset):
+            self.events_left = self.data_f['events'][:]  # N,4  # N,4
+            # 如果是结构化数组，转为普通二维float64数组
+            #还需要保证是x,y,p,t而不是x,y,t,p
+            if self.events_left.dtype.fields is not None:
+                self.events_left = np.stack([
+                    self.events_left['x'].astype(np.float32),
+                    self.events_left['y'].astype(np.float32),
+                    self.events_left['p'].astype(np.float32),
+                    (self.events_left['t']/1000000.0).astype(np.float64)  # 转为秒
+                ], axis=-1)
+            else:
+                self.events_left = np.stack([
+                    self.events_left[:,0].astype(np.float32),
+                    self.events_left[:,1].astype(np.float32),
+                    self.events_left[:,3].astype(np.float32),
+                    (self.events_left[:,2]/1000000.0).astype(np.float64)  # 转为秒
+                ], axis=-1)
+            if self.events_left.ndim == 1 and self.events_left.shape[0] % 4 == 0:
+                self.events_left = self.events_left.reshape(-1, 4)
         t_start = self.events_left[0, 3]
         t_end = self.events_left[-1, 3]
-        self.ts_left = np.arange(t_start, t_end, self.t)
+        self.ts_left = np.arange(t_start, t_end, self.t, dtype=np.float64)
 
         # 记录每个slice的事件范围
         self.slice_indices_left = []
@@ -84,7 +123,7 @@ class simHDF5Dataset(Dataset):
         else:
             xs = torch.from_numpy(events[:, 0].astype(np.float32))
             ys = torch.from_numpy(events[:, 1].astype(np.float32))
-            ts_arr = events[:, 2].astype(np.float32)
+            ts_arr = events[:, 2].astype(np.float64)
             ps = torch.from_numpy(events[:, 3].astype(np.float32)) * 2 - 1
             ts = torch.from_numpy((ts_arr - ts_arr[0]) / (ts_arr[-1] - ts_arr[0]) if ts_arr[-1] > ts_arr[0] else np.zeros_like(ts_arr))
             if ts.shape[0] > 0:
@@ -126,7 +165,8 @@ class simHDF5Dataset(Dataset):
         # 事件resize
         if len(events) > 0:
             xs, ys = events[:, 0], events[:, 1]
-            xs, ys = resize_events(xs, ys, self.resolution, self.resolution)
+            ORIGINAL_EVENT_SHAPE = (720, 1280)  # 事件相机的分辨率,MVSEC(260,346),propheshe/方竹(720,1280),DESC(480,640)
+            xs, ys = resize_events(xs, ys, ORIGINAL_EVENT_SHAPE, self.resolution)
             events[:, 0] = xs
             events[:, 1] = ys
         # 事件编码

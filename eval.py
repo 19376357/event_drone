@@ -45,9 +45,8 @@ def test(args, config_parser):
 
     mlflow.set_tracking_uri(args.path_mlflow)
     mlflow.set_experiment("eval_experiment")
-    mlflow.start_run(run_name="eval LIFFireNet")
+    mlflow.start_run(run_name="eval XLIFEVFlowNet")
     eval_runid = mlflow.active_run().info.run_id
-    print("New eval runid:", eval_runid)
 
     config = config_parser.config
 
@@ -106,6 +105,8 @@ def test(args, config_parser):
             resolution=resolution,
             hot_filter=hot_filter,
             eye=eye,
+            undistort=config["data"]["undistort"],
+            map_dir=config["data"]["undistort_dir"],
             config=config
         )
         dataloader = torch.utils.data.DataLoader(
@@ -295,7 +296,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--runid",
-        default="LIFFireNet",
+        default="XLIFEVFlowNet",
         help="parent mlflow run (optional, for run)",
     )
     parser.add_argument(
