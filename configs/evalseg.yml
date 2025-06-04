@@ -1,6 +1,6 @@
 data:
     data_dir: datasets/eval2
-    eye: "left"        # 可选：left/right/both
+    eye: "both"        # 可选：left/right/both
     num_bins: 2       # 体素编码的bin数
     undistort: True  # 是否去畸变
     undistort_dir: "datasets/map/" # 去畸变后的数据存放路径
@@ -37,7 +37,7 @@ loader:
     gpu: 0
 
 vis:
-    enabled: True
+    enabled: False
     px: 400
     delay: 1
     bars: True

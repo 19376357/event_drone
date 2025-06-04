@@ -45,7 +45,7 @@ def test(args, config_parser):
 
     mlflow.set_tracking_uri(args.path_mlflow)
     mlflow.set_experiment("test_experiment")
-    mlflow.start_run(run_name="test LIFFireNet")
+    mlflow.start_run(run_name="test PLIFEVFlowNet")
     eval_runid = mlflow.active_run().info.run_id
     print("New test runid:", eval_runid)
 
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--runid",
-        default="LIFFireNet",
+        default="PLIFEVFlowNet",
         help="parent mlflow run (optional, for run)",
     )
     parser.add_argument(

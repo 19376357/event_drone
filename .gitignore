@@ -3,10 +3,12 @@ datasets/
 weights/
 mlruns/
 mlartifact/
+mlartifacts/
 results_inference/
 results_test/
 *.hdf5
 *.npz
+newlr.py
 
 # 忽略临时文件
 *.pyc

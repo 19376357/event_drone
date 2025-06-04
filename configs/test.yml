@@ -2,7 +2,7 @@ data:
     data_dir: datasets/test/
     num_bins: 2       # 体素编码的bin数
 model:
-    name: LIFFireNet # for other models available, see models/model.py
+    name: PLIFRecEVFlowNet # for other models available, see models/model.py SpikingRecEVFlowNet XLIFRecEVFlowNet
     encoding: cnt # voxel;cnt，同上
     round_encoding: False # for voxel encoding
     norm_input: False # normalize input
@@ -11,12 +11,12 @@ model:
     kernel_size: 3
     activations: [arctanspike, arctanspike] # activations for ff and rec neurons
     mask_output: True
-    spiking_neuron:
-        leak: [-4.0, 0.1]
-        thresh: [0.8, 0.1]
-        learn_leak: True
-        learn_thresh: True
-        hard_reset: True
+    spiking_neuron: None
+        #leak: [-4.0, 0.1]
+        #thresh: [0.8, 0.1]
+        #learn_leak: True
+        #learn_thresh: True
+        #hard_reset: True
 
 metrics:
     name: [FWL, RSAT]  # FWL, RSAT, AEE

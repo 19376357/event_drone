@@ -434,23 +434,27 @@ class SpikingMultiResUNetRecurrent(MultiResUNetRecurrent):
         self.num_states = self.num_encoders * 2 + self.num_residual_blocks
         self.states = [None] * self.num_states
 
-    def forward(self, x):
+    def forward(self, x, log=False):
         """
         :param x: N x num_input_channels x H x W
         :return: [N x num_output_channels x H x W for i in range(self.num_encoders)]
         """
-
+        activity_list = []
         # encoder
         blocks = []
         offset = 0
         for i, encoder in enumerate(self.encoders):
             x, self.states[i] = encoder(x, self.states[i])
             blocks.append(x)
+            if log:
+                activity_list.append(x.detach().ne(0).float().mean().item())
 
         # residual blocks
         offset += self.num_encoders
         for i, resblock in enumerate(self.resblocks):
             x, self.states[offset + i] = resblock(x, self.states[offset + i])
+            if log:
+                activity_list.append(x.detach().ne(0).float().mean().item())
 
         # decoder and multires predictions
         predictions = []
@@ -461,8 +465,10 @@ class SpikingMultiResUNetRecurrent(MultiResUNetRecurrent):
                 x = self.skip_ftn(predictions[-1], x)
             x, self.states[offset + i] = decoder(x, self.states[offset + i])
             predictions.append(pred(x))
+            if log:
+                activity_list.append(x.detach().ne(0).float().mean().item())
 
-        return predictions
+        return predictions, activity_list
 
 
 class LeakyMultiResUNetRecurrent(SpikingMultiResUNetRecurrent):

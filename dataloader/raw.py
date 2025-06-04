@@ -22,7 +22,7 @@ class simHDF5Dataset(Dataset):
     """
     支持事件、深度、光流的Dataset,事件数据支持cnt/voxel编码,按深度时间戳切片。
     """
-    def __init__(self, data_h5, voxel_bins=5,  resolution=(960, 1240), hot_filter=None, config=None,t=0.02):       
+    def __init__(self, data_h5, voxel_bins=5,  resolution=(960, 1240), hot_filter=None, config=None,t=0.01):       
         self.data_h5 = data_h5
         self.last_proc_timestamp = 0 
         self.voxel_bins = voxel_bins
@@ -62,12 +62,13 @@ class simHDF5Dataset(Dataset):
         elif 'events' in self.data_f and isinstance(self.data_f['events'], h5py.Group):
             group = self.data_f['events']
             N = group['x'].shape[0]  # 总事件数
-            half = N // 2
+            half1 = N // 32
+            half = N // 16
             if all(k in group for k in ['x', 'y', 't', 'p']):
-                x = group['x'][:half]
-                y = group['y'][:half]
-                t = group['t'][:half]
-                p = group['p'][:half]
+                x = group['x'][half1:half]
+                y = group['y'][half1:half]
+                t = group['t'][half1:half]
+                p = group['p'][half1:half]
                 self.events_left = np.stack([
                     x.astype(np.float32),
                     y.astype(np.float32),

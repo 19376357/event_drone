@@ -514,11 +514,23 @@ class RecEVFlowNet(BaseModel):
             x = self.crop.pad(x)
 
         # forward pass
-        multires_flow = self.multires_unetrec.forward(x)
+        multires_flow, activity_list = self.multires_unetrec.forward(x,log=log)
 
         # log activity
         if log:
-            raise NotImplementedError("Activity logging not implemented")
+            name = [
+                "enc0",
+                "enc1",
+                "enc2",
+                "enc3",
+                "res0",
+                "res1",
+                "dec0",
+                "dec1",
+                "dec2",
+                "dec3",
+            ]
+            activity = {n: act for n, act in zip(name, activity_list)}
         else:
             activity = None
 

@@ -277,7 +277,7 @@ def test(args, config_parser):
                     )
             log_results(eval_runid, results, path_results, eval_id)
     mlflow.log_params(config)
-    aee_values = [float(v) for v in results["AEE"].values()]
+    aee_values = [float(v) for v in results.get("AEE", {}).values()]
     aee_mean = sum(aee_values) / len(aee_values) if aee_values else 0.0
 
     fwl_values = [float(v) for v in results["FWL"].values()]
