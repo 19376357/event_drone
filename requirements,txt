@@ -2,4 +2,4 @@ numpy==2.2.6
 torch==2.7.0
 pyyaml==6.0.2
 mlflow
-h5py
+h5py==3.13.0
