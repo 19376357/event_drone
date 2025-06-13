@@ -1,0 +1,24 @@
+{
+    "roi_state": {
+     "window": [
+      {
+       "x": 100,
+       "y": 200,
+       "width": 50,
+       "height": 50
+      }
+     ],
+     "columns": [],
+     "rows": [],
+     "enabled": true,
+     "mode": "RONI"
+    },
+    "ll_biases_state": {
+     "bias": [
+      {
+       "name": "bias_fo",
+       "value": 11
+      }
+     ]
+    }
+   }
