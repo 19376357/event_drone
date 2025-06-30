@@ -67,8 +67,8 @@ class simHDF5Dataset(Dataset):
             if all(k in group for k in ['x', 'y', 't', 'p']):
                 x = group['x'][half1:half]
                 y = group['y'][half1:half]
-                t = group['t'][half1:half]
                 p = group['p'][half1:half]
+                t = group['t'][half1:half]
                 self.events_left = np.stack([
                     x.astype(np.float32),
                     y.astype(np.float32),
@@ -124,8 +124,12 @@ class simHDF5Dataset(Dataset):
         else:
             xs = torch.from_numpy(events[:, 0].astype(np.float32))
             ys = torch.from_numpy(events[:, 1].astype(np.float32))
-            ts_arr = events[:, 2].astype(np.float64)
-            ps = torch.from_numpy(events[:, 3].astype(np.float32)) * 2 - 1
+            ts_arr = events[:, 3].astype(np.float64)
+            unique_p = np.unique(torch.from_numpy(events[:, 2].astype(np.int32)))
+            if set(unique_p) == {0, 1} or set(unique_p) == {0.0, 1.0}:
+                ps = torch.from_numpy(events[:, 2].astype(np.float32)) * 2 - 1
+            else:
+                ps = torch.from_numpy(events[:, 2].astype(np.float32))
             ts = torch.from_numpy((ts_arr - ts_arr[0]) / (ts_arr[-1] - ts_arr[0]) if ts_arr[-1] > ts_arr[0] else np.zeros_like(ts_arr))
             if ts.shape[0] > 0:
                 self.last_proc_timestamp = ts[-1]

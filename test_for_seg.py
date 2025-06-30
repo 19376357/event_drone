@@ -8,8 +8,8 @@ import os
 import json
 
 from configs.parser import YAMLParser
-from dataloader.hdf5 import HDF5Dataset
-from dataloader.hdf5 import find_data_triplets
+from dataloader.raw import simHDF5Dataset
+from dataloader.raw import simfind_data_triplets
 from utils.utils import load_model
 from loss.self_supervised import FWL, RSAT, AEE
 from models.model import (
@@ -91,24 +91,18 @@ def test(args, config_parser):
 
     # 数据加载
     data_dir = config["data"]["data_dir"]
-    eye = config["data"].get("eye", "left")
     voxel_bins = config["data"].get("num_bins", 5)
-    resolution = tuple(config["loader"].get("resolution", [260, 346]))
+    resolution = tuple(config["loader"].get("resolution"))
     hot_filter = config.get("hot_filter", {})
-    triplets = find_data_triplets(data_dir)
+    triplets = simfind_data_triplets(data_dir)
     print(f"共找到{len(triplets)}组数据文件。")
-    for idx, (data_h5, gt_h5, flow_npz) in enumerate(triplets):
-        print(f"\n正在读取第{idx+1}组: \n  data: {data_h5}\n  gt: {gt_h5}\n  flow: {flow_npz}")
-        dataset = HDF5Dataset(
+    for idx, data_h5 in enumerate(triplets):
+        print(f"\n正在读取第{idx+1}组: \n  data: {data_h5}\n ")
+        dataset = simHDF5Dataset(
             data_h5=data_h5,
-            gt_h5=gt_h5,
-            flow_npz=flow_npz,
             voxel_bins=voxel_bins,
             resolution=resolution,
             hot_filter=hot_filter,
-            eye=eye,
-            undistort=config["data"]["undistort"],
-            map_dir=config["data"]["undistort_dir"],
             config=config
         )
         dataloader = torch.utils.data.DataLoader(
@@ -122,58 +116,53 @@ def test(args, config_parser):
     val_results = {}
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
-            if i == 0 or i == len(dataloader) - 1:
+            if i == 0 or i == len(dataloader) - 1:  # 跳过首尾的batch
                 continue  # 跳过首尾，因为首尾的事件dt与标签dt可能不一致
-            x_left = model(
-                    batch["left"]["event_voxel"].to(device),
-                    batch["left"]["event_cnt"].to(device),
-                    log=config["vis"]["activity"]
-                )
-            
-            x_right = model(
-                    batch["right"]["event_voxel"].to(device),
-                    batch["right"]["event_cnt"].to(device),
-                    log=config["vis"]["activity"]
-                )
-            
-            flow_left = x_left['flow'][-1].clone()
-            
-            flow_right = x_right['flow'][-1].clone()
-            
-            flow_left *= batch["left"]["mask"].to(device)
-            
-            flow_right *= batch["right"]["mask"].to(device)
-            
-            fg_left = segment_events_by_flow(
-                batch["left"]["event_list"].squeeze(0).cpu().numpy(),
+            if i <=200:
+                continue
+            print(f"Batch {i}:")
+            x = model(
+                batch["event_voxel"].to(device),
+                batch["event_cnt"].to(device),
+                log=config["vis"]["activity"]
+            )
+            flow_left = x["flow"][-1].clone()
+            flow_left *= batch["mask"].to(device)
+
+            ys_fg_left, xs_fg_left = segment_events_by_flow(
+                batch["event_cnt"].squeeze(0).cpu().numpy(),
                 flow_left.squeeze(0).cpu().numpy(),
                 threshold=config["segmentation"]["flow_threshold"]
             )
-            
-            fg_right = segment_events_by_flow(
-                batch["right"]["event_list"].squeeze(0).cpu().numpy(),
-                flow_right.squeeze(0).cpu().numpy(),
-                threshold=config["segmentation"]["flow_threshold"]
-            )
-            
-            obj_left = cluster_moving_objects(
-                batch["left"]["event_list"].squeeze(0).cpu().numpy()[fg_left],
-                flow_left.squeeze(0).cpu().numpy(),
-                fg_left,
+
+            main_ys_left, main_xs_left = cluster_moving_objects(
+                ys_fg_left, xs_fg_left,
                 eps=config["cluster"]["eps"],
                 min_samples=config["cluster"]["min_samples"]
             )
-            
-            obj_right = cluster_moving_objects(
-                batch["right"]["event_list"].squeeze(0).cpu().numpy()[fg_right],
-                flow_right.squeeze(0).cpu().numpy(),
-                fg_right,
-                eps=config["cluster"]["eps"],
-                min_samples=config["cluster"]["min_samples"]
-            )
+
+            event_list_left = batch["event_list"].squeeze(0).cpu().numpy()
+            ys_all_left = event_list_left[:, 1].astype(np.int32)
+            xs_all_left = event_list_left[:, 2].astype(np.int32)
+            fg_pixel_set_left = set(zip(ys_fg_left, xs_fg_left))
+            obj_pixel_set_left = set(zip(main_ys_left, main_xs_left))
+            fg_mask = np.array([(y, x) in fg_pixel_set_left for y, x in zip(ys_all_left, xs_all_left)])
+            obj_mask_left = np.array([(y, x) in obj_pixel_set_left for y, x in zip(ys_all_left, xs_all_left)])
+            fg_events_left = event_list_left[fg_mask]
+            obj_events_left = event_list_left[obj_mask_left]
+
+            '''
+            event_list_right = batch["right"]["event_list"].squeeze(0).cpu().numpy()
+            ys_all_right = event_list_right[:, 1].astype(np.int32)
+            xs_all_right = event_list_right[:, 2].astype(np.int32)
+            obj_pixel_set_right = set(zip(main_ys_right, main_xs_right))
+            obj_mask_right = np.array([(y, x) in obj_pixel_set_right for y, x in zip(ys_all_right, xs_all_right)])
+            obj_events_right = event_list_right[obj_mask_right]
+
+
             matches = match_stereo_events(
-                batch["left"]["event_list"].squeeze(0).cpu().numpy()[obj_left],
-                batch["right"]["event_list"].squeeze(0).cpu().numpy()[obj_right],
+                obj_events_left,
+                obj_events_right,
                 max_dist=config["match"]["max_dist"],
                 max_dt=config["match"]["max_dt"]
             )
@@ -182,32 +171,29 @@ def test(args, config_parser):
             cx = config["camera"]["cx"]
             cy = config["camera"]["cy"]
             B = config["camera"]["baseline"]       # 米
-            main_obj_events_left = batch["left"]["event_list"].squeeze(0).cpu().numpy()[obj_left]
-            main_obj_events_right = batch["right"]["event_list"].squeeze(0).cpu().numpy()[obj_right]
-            points_3d = triangulate_stereo_points(main_obj_events_left, main_obj_events_right, matches, fx,fy, cx, cy, B)
+
+            points_3d = triangulate_stereo_points(obj_events_left, obj_events_right, matches, fx,fy, cx, cy, B)
             if len(points_3d) > 0:
                 Z_mean = np.mean(points_3d[:, 2])
                 velocity = estimate_object_velocity(
-                    main_obj_events_left, 
+                    obj_events_left, 
                     flow_left.squeeze(0).cpu().numpy(), 
                     points_3d, 
                     matches, 
                     fx,fy,Z_mean, dt=0.05  # dt可根据事件时间戳实际计算
                 )
                 print("目标物体空间速度估计:", velocity)
-            
-            vis = VisForSeg(px=346,py=260)
+            '''
+
+
+            vis = VisForSeg(px=256,py=256)
             vis.visualize_all(
-                events=batch["left"]["event_list"].squeeze(0).cpu().numpy(),
+                events=batch["event_list"].squeeze(0).cpu().numpy(),
                 flow=flow_left.squeeze(0).cpu().numpy(),
-                fg_events=batch["left"]["event_list"].squeeze(0).cpu().numpy()[fg_left] if fg_left is not None else None,
-                obj_events=batch["left"]["event_list"].squeeze(0).cpu().numpy()[obj_left] if obj_left is not None else None,
-            )
-            vis.visualize_all(
-                events=batch["right"]["event_list"].squeeze(0).cpu().numpy(),
-                flow=flow_right.squeeze(0).cpu().numpy(),
-                fg_events=batch["right"]["event_list"].squeeze(0).cpu().numpy()[fg_right] if fg_right is not None else None,
-                obj_events=batch["right"]["event_list"].squeeze(0).cpu().numpy()[obj_right] if obj_right is not None else None,
+                fg_events=fg_events_left,
+                obj_events=obj_events_left,
+                fg_pixels=(ys_fg_left, xs_fg_left),
+                obj_pixels=(main_ys_left, main_xs_left),
             )
 
     mlflow.log_params(config)

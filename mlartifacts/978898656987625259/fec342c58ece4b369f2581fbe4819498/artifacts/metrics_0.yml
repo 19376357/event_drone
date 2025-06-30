@@ -1,4 +1,0 @@
-FWL:
-  datasets/test/driving_data.hdf5: '0.9816868142383173'
-RSAT:
-  datasets/test/driving_data.hdf5: '0.46423791484832766'

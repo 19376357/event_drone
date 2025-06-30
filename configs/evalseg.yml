@@ -1,5 +1,5 @@
 data:
-    data_dir: datasets/eval2
+    data_dir: datasets/test
     eye: "both"        # 可选：left/right/both
     num_bins: 2       # 体素编码的bin数
     undistort: True  # 是否去畸变
@@ -20,6 +20,22 @@ model:
         #learn_leak: True
         #learn_thresh: True
         #hard_reset: True
+segmentation:
+    flow_threshold: 0.01
+cluster:
+    eps: 10
+    min_samples: 3
+match:
+    stereo_matching: True # 是否使用双目匹配
+    max_dist: 2 # 双目匹配的最大距离
+    max_dt: 0.001 # 双目匹配的最大时间差
+camera:
+#按分辨率缩放了，从346,260到256,256
+    fx: 167.495  # 226.38018519795807
+    fy: 222.671  # 226.15002947047415
+    cx: 128.479  #173.6470807871759
+    cy: 131.676  #133.73271487507847
+    baseline: 0.09988137641750752        # 米
 
 metrics:
     name: [AEE, FWL, RSAT]  # FWL, RSAT, AEE
