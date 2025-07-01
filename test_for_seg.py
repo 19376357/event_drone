@@ -1,6 +1,5 @@
 import argparse
 import cv2
-import mlflow
 import numpy as np
 import torch
 from torch.optim import *
@@ -12,75 +11,31 @@ from dataloader.raw import simHDF5Dataset
 from dataloader.raw import simfind_data_triplets
 from utils.utils import load_model
 from loss.self_supervised import FWL, RSAT, AEE
+from models.model import EVFlowNet
 from models.model import (
-    FireNet,
-    RNNFireNet,
-    LeakyFireNet,
-    FireFlowNet,
-    LeakyFireFlowNet,
-    E2VID,
-    EVFlowNet,
-    RecEVFlowNet,
-    LeakyRecEVFlowNet,
-    RNNRecEVFlowNet,
-)
-from models.model import (
-    LIFFireNet,
-    PLIFFireNet,
-    ALIFFireNet,
-    XLIFFireNet,
-    LIFFireFlowNet,
     SpikingRecEVFlowNet,
     PLIFRecEVFlowNet,
     ALIFRecEVFlowNet,
     XLIFRecEVFlowNet,
 )
-from utils.iwe import compute_pol_iwe
-from utils.utils import load_model, create_model_dir
-from utils.mlflow import log_config, log_results
-from utils.visualization import Visualization, vis_activity
+from utils.utils import load_model, create_model_dir,log_config
 from utils.vis_for_seg import VisForSeg
 from utils.segmatch import segment_events_by_flow,cluster_moving_objects, match_stereo_events, triangulate_stereo_points, estimate_object_velocity
 
 
 def test(args, config_parser):
 
-    mlflow.set_tracking_uri(args.path_mlflow)
-    mlflow.set_experiment("eval_seg_experiment")
-    mlflow.start_run(run_name="seg XLIFEVFlowNet")
-    eval_runid = mlflow.active_run().info.run_id
-
+    #初始化
     config = config_parser.config
-
-    # configs
-    if config["loader"]["batch_size"] > 1:
-        config["vis"]["enabled"] = False
-        config["vis"]["store"] = False
-        config["vis"]["bars"] = False  # progress bars not yet compatible batch_size > 1
-
-
-    if not args.debug:
-        # create directory for inference results
-        path_results = create_model_dir(args.path_results, eval_runid)
-
-        # store validation settings
-        eval_id = log_config(path_results, eval_runid, config)
-    else:
-        path_results = None
-        eval_id = -1
-
-    # 初始设置
     device = config_parser.device
+    runid = args.runid
 
-    # 可视化工具
-    if config["vis"]["enabled"] or config["vis"]["store"]:
-        vis = Visualization(config, eval_id=eval_id, path_results=path_results)
 
     # 模型初始化
     model_name = config["model"]["name"]
     model = eval(model_name)(config["model"].copy()).to(device)
-    model = load_model(args.runid, model, device)
-    #model = load_model(model_name, model, device, weights_dir="weights")
+    model_path = os.path.join("weights", runid, "artifacts", "model", "data", "model.pth")
+    model = load_model(model_path, model, device)
     model.eval()
 
     # 验证参数
@@ -151,40 +106,6 @@ def test(args, config_parser):
             fg_events_left = event_list_left[fg_mask]
             obj_events_left = event_list_left[obj_mask_left]
 
-            '''
-            event_list_right = batch["right"]["event_list"].squeeze(0).cpu().numpy()
-            ys_all_right = event_list_right[:, 1].astype(np.int32)
-            xs_all_right = event_list_right[:, 2].astype(np.int32)
-            obj_pixel_set_right = set(zip(main_ys_right, main_xs_right))
-            obj_mask_right = np.array([(y, x) in obj_pixel_set_right for y, x in zip(ys_all_right, xs_all_right)])
-            obj_events_right = event_list_right[obj_mask_right]
-
-
-            matches = match_stereo_events(
-                obj_events_left,
-                obj_events_right,
-                max_dist=config["match"]["max_dist"],
-                max_dt=config["match"]["max_dt"]
-            )
-            fx = config["camera"]["fx"]
-            fy = config["camera"]["fy"]    # 像素单位
-            cx = config["camera"]["cx"]
-            cy = config["camera"]["cy"]
-            B = config["camera"]["baseline"]       # 米
-
-            points_3d = triangulate_stereo_points(obj_events_left, obj_events_right, matches, fx,fy, cx, cy, B)
-            if len(points_3d) > 0:
-                Z_mean = np.mean(points_3d[:, 2])
-                velocity = estimate_object_velocity(
-                    obj_events_left, 
-                    flow_left.squeeze(0).cpu().numpy(), 
-                    points_3d, 
-                    matches, 
-                    fx,fy,Z_mean, dt=0.05  # dt可根据事件时间戳实际计算
-                )
-                print("目标物体空间速度估计:", velocity)
-            '''
-
 
             vis = VisForSeg(px=256,py=256)
             vis.visualize_all(
@@ -196,9 +117,6 @@ def test(args, config_parser):
                 obj_pixels=(main_ys_left, main_xs_left),
             )
 
-    mlflow.log_params(config)
-
-    mlflow.end_run()
 
                      
 
@@ -207,23 +125,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--runid",
         default="XLIFEVFlowNet",
-        help="parent mlflow run (optional, for run)",
     )
     parser.add_argument(
         "--config",
-        default="configs/evalseg.yml",
-        help="config file, overwrites mlflow settings",
+        default="configs/testseg.yml",
     )
-    parser.add_argument(
-        "--path_mlflow",
-        default="http://localhost:5000",
-        help="location of the mlflow ui",
-    )
-    parser.add_argument("--path_results", default="results_inference/")
+    parser.add_argument("--path_results", default="eval_results_test/")
     parser.add_argument(
         "--debug",
-        action="store_true",
-        help="don't save stuff",
     )
     args = parser.parse_args()
 

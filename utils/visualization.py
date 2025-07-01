@@ -19,7 +19,7 @@ class Visualization:
         self.px = kwargs["vis"]["px"]
         self.color_scheme = "green_red"  # gray / blue_red / green_red
 
-        if eval_id >= 0 and path_results is not None:
+        if path_results is not None:
             self.store_dir = path_results + "results/"
             self.store_dir = self.store_dir + "eval_" + str(eval_id) + "/"
             if not os.path.exists(self.store_dir):
@@ -49,16 +49,6 @@ class Visualization:
         cv2.resizeWindow("Input Events", int(self.px), int(self.px))
         cv2.imshow("Input Events", self.events_to_image(events_npy))
 
-        '''
-        # input events
-        if events_window is not None:
-            events_window = events_window.detach()
-            events_window_npy = events_window.cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, -1))
-            cv2.namedWindow("Input Events - Eval window", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Input Events - Eval window", int(self.px), int(self.px))
-            cv2.imshow("Input Events - Eval window", self.events_to_image(events_window_npy))
-        '''
-
         # input frames
         if frames is not None:
             frame_image = np.zeros((height, 2 * width))
@@ -69,6 +59,8 @@ class Visualization:
             cv2.namedWindow("Input Frames (Prev/Curr)", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Input Frames (Prev/Curr)", int(2 * self.px), int(self.px))
             cv2.imshow("Input Frames (Prev/Curr)", frame_image)
+        
+
         # Farneback 光流可视化
         if frames is not None:
             flow_fb_tensor = self.get_farneback_flow_img(frames, height, width)
@@ -81,6 +73,8 @@ class Visualization:
             cv2.namedWindow("Farneback Flow", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Farneback Flow", int(self.px), int(self.px))
             cv2.imshow("Farneback Flow", flow_fb_img)
+
+        
         # optical flow
         if flow is not None:
             flow = flow.detach()
@@ -90,20 +84,6 @@ class Visualization:
             cv2.namedWindow("Estimated Flow", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Estimated Flow", int(self.px), int(self.px))
             cv2.imshow("Estimated Flow", flow_npy)
-        
-        '''
-        # optical flow
-        if masked_window_flow is not None:
-            masked_window_flow = masked_window_flow.detach()
-            masked_window_flow_npy = masked_window_flow.cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, 2))
-            masked_window_flow_npy = self.flow_to_image(
-                masked_window_flow_npy[:, :, 0], masked_window_flow_npy[:, :, 1]
-            )
-            masked_window_flow_npy = cv2.cvtColor(masked_window_flow_npy, cv2.COLOR_RGB2BGR)
-            cv2.namedWindow("Estimated Flow - Eval window", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Estimated Flow - Eval window", int(self.px), int(self.px))
-            cv2.imshow("Estimated Flow - Eval window", masked_window_flow_npy)
-        '''
 
         # ground-truth optical flow
         if gtflow is not None:
@@ -114,6 +94,8 @@ class Visualization:
             cv2.namedWindow("Ground-truth Flow", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Ground-truth Flow", int(self.px), int(self.px))
             cv2.imshow("Ground-truth Flow", gtflow_npy)
+        
+        
         if gtflow_mask is not None:
             gtflow_mask = gtflow_mask.detach()
             gtflow_mask_npy = gtflow_mask.cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, 2))
@@ -152,18 +134,10 @@ class Visualization:
             cv2.namedWindow("Image of Warped Events", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Image of Warped Events", int(self.px), int(self.px))
             cv2.imshow("Image of Warped Events", iwe_npy)
-        '''
-        # image of warped events - evaluation window
-        if iwe_window is not None:
-            iwe_window = iwe_window.detach()
-            iwe_window_npy = iwe_window.cpu().numpy().transpose(0, 2, 3, 1).reshape((height, width, 2))
-            iwe_window_npy = self.events_to_image(iwe_window_npy)
-            cv2.namedWindow("Image of Warped Events - Eval window", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Image of Warped Events - Eval window", int(self.px), int(self.px))
-            cv2.imshow("Image of Warped Events - Eval window", iwe_window_npy)
-        '''
 
         cv2.waitKey(self.vis_delay)
+
+    #双目可视化
     def update_stereo(
         self,
         events_left, events_right,
@@ -250,6 +224,8 @@ class Visualization:
             cv2.namedWindow("Estimated Flow (Left | Right)", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Estimated Flow (Left | Right)", int(2 * self.px), int(self.px))
             cv2.imshow("Estimated Flow (Left | Right)", img_flow)
+
+
         # 光流箭头拼接
         def get_arrow_img(frames, flow):
             if frames is None or flow is None:
@@ -326,7 +302,7 @@ class Visualization:
 
         cv2.waitKey(self.vis_delay)
 
-
+    #保存可视化结果
     def store(self, inputs, flow, iwe, sequence, events_window=None, masked_window_flow=None, iwe_window=None, ts=None):
         """
         Store rendered images.
@@ -435,6 +411,10 @@ class Visualization:
 
         self.img_idx += 1
         cv2.waitKey(self.vis_delay)
+
+
+
+    #静态函数方法
 
     @staticmethod
     def flow_to_image(flow_x, flow_y):
@@ -571,6 +551,7 @@ class Visualization:
         return vis
 
 
+#神经元活动可视化
 def vis_activity(activity, activity_log):
     # start of new sequence
     if activity_log is None:

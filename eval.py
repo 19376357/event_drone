@@ -1,6 +1,5 @@
 import argparse
 import cv2
-import mlflow
 import numpy as np
 import torch
 from torch.optim import *
@@ -10,65 +9,34 @@ import json
 from configs.parser import YAMLParser
 from dataloader.hdf5 import HDF5Dataset
 from dataloader.hdf5 import find_data_triplets
-from utils.utils import load_model
 from loss.self_supervised import FWL, RSAT, AEE
+from models.model import EVFlowNet
 from models.model import (
-    FireNet,
-    RNNFireNet,
-    LeakyFireNet,
-    FireFlowNet,
-    LeakyFireFlowNet,
-    E2VID,
-    EVFlowNet,
-    RecEVFlowNet,
-    LeakyRecEVFlowNet,
-    RNNRecEVFlowNet,
-)
-from models.model import (
-    LIFFireNet,
-    PLIFFireNet,
-    ALIFFireNet,
-    XLIFFireNet,
-    LIFFireFlowNet,
     SpikingRecEVFlowNet,
     PLIFRecEVFlowNet,
     ALIFRecEVFlowNet,
     XLIFRecEVFlowNet,
 )
 from utils.iwe import compute_pol_iwe
-from utils.utils import load_model, create_model_dir
-from utils.mlflow import log_config, log_results
+from utils.utils import load_model, create_model_dir, log_config, log_results
 from utils.visualization import Visualization, vis_activity
 
 
 def test(args, config_parser):
 
-    mlflow.set_tracking_uri(args.path_mlflow)
-    mlflow.set_experiment("eval_experiment")
-    mlflow.start_run(run_name="eval XLIFEVFlowNet")
-    eval_runid = mlflow.active_run().info.run_id
-
+    #初始化
     config = config_parser.config
+    device = config_parser.device
+    runid = args.runid
 
-    # configs
-    if config["loader"]["batch_size"] > 1:
-        config["vis"]["enabled"] = False
-        config["vis"]["store"] = False
-        config["vis"]["bars"] = False  # progress bars not yet compatible batch_size > 1
-
-
+    # 非debug时保存验证结果
     if not args.debug:
-        # create directory for inference results
-        path_results = create_model_dir(args.path_results, eval_runid)
-
-        # store validation settings
-        eval_id = log_config(path_results, eval_runid, config)
+        path_results = create_model_dir(args.path_results, runid)
+        eval_id = log_config(path_results, runid, config)
     else:
         path_results = None
         eval_id = -1
 
-    # 初始设置
-    device = config_parser.device
 
     # 可视化工具
     if config["vis"]["enabled"] or config["vis"]["store"]:
@@ -77,8 +45,8 @@ def test(args, config_parser):
     # 模型初始化
     model_name = config["model"]["name"]
     model = eval(model_name)(config["model"].copy()).to(device)
-    model = load_model(args.runid, model, device)
-    #model = load_model(model_name, model, device, weights_dir="weights")
+    model_path = os.path.join("weights", runid, "artifacts", "model", "data", "model.pth")
+    model = load_model(model_path, model, device)
     model.eval()
 
     # 验证参数
@@ -275,8 +243,7 @@ def test(args, config_parser):
                     results[metric + "_percent"][key] = str(
                         val_results[key][metric]["percent"] / val_results[key][metric]["it"]
                     )
-            log_results(eval_runid, results, path_results, eval_id)
-    mlflow.log_params(config)
+            log_results(path_results, results, eval_id)
     aee_values = [float(v) for v in results.get("AEE", {}).values()]
     aee_mean = sum(aee_values) / len(aee_values) if aee_values else 0.0
 
@@ -285,10 +252,8 @@ def test(args, config_parser):
 
     rsat_values = [float(v) for v in results["RSAT"].values()]
     rsat_mean = sum(rsat_values) / len(rsat_values) if rsat_values else 0.0
-    mlflow.log_metric("AEE", aee_mean)
-    mlflow.log_metric("FWL", fwl_mean)
-    mlflow.log_metric("RSAT", rsat_mean)
-    mlflow.end_run()
+    print(f"AEE mean: {aee_mean:.4f}, FWL mean: {fwl_mean:.4f}, RSAT mean: {rsat_mean:.4f}")
+
 
                      
 
@@ -297,25 +262,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--runid",
         default="XLIFEVFlowNet",
-        help="parent mlflow run (optional, for run)",
     )
     parser.add_argument(
         "--config",
         default="configs/eval.yml",
-        help="config file, overwrites mlflow settings",
-    )
-    parser.add_argument(
-        "--path_mlflow",
-        default="http://localhost:5000",
-        help="location of the mlflow ui",
     )
     parser.add_argument("--path_results", default="results_inference/")
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="don't save stuff",
-    )
+    parser.add_argument("--debug")
     args = parser.parse_args()
 
-    # launch testing
     test(args, YAMLParser(args.config))

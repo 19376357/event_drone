@@ -1,5 +1,4 @@
 import argparse
-import mlflow
 import torch
 from torch.optim import *
 from torch.utils.data import ConcatDataset
@@ -10,21 +9,7 @@ from dataloader.hdf5 import HDF5Dataset
 from dataloader.hdf5 import find_data_triplets
 from loss.self_supervised import EventWarping
 from models.model import (
-    FireNet,
-    RNNFireNet,
-    LeakyFireNet,
-    FireFlowNet,
-    LeakyFireFlowNet,
-    E2VID,
     EVFlowNet,
-    RecEVFlowNet,
-    LeakyRecEVFlowNet,
-    RNNRecEVFlowNet,
-    LIFFireNet,
-    PLIFFireNet,
-    ALIFFireNet,
-    XLIFFireNet,
-    LIFFireFlowNet,
     SpikingRecEVFlowNet,
     PLIFRecEVFlowNet,
     ALIFRecEVFlowNet,
@@ -37,13 +22,11 @@ from utils.mlflow import log_config
 
 def train(args, config_parser):
 
-    mlflow.set_tracking_uri(args.path_mlflow)
-    mlflow.set_experiment(config_parser.config.get("experiment", "Default"))
-    mlflow.start_run(run_name="train")
-    runid = mlflow.active_run().info.run_id
-    print("New train runid:", runid)
-
+    #初始化
     config = config_parser.config
+    device = config_parser.device
+    kwargs = config_parser.loader_kwargs
+    runid =  "train"
 
     # configs
     if config["loader"]["batch_size"] > 1:
@@ -54,9 +37,6 @@ def train(args, config_parser):
     path_results = create_model_dir(args.path_results, runid)
     train_id = log_config(path_results, runid, config)
 
-    # 初始设置
-    device = config_parser.device
-    kwargs = config_parser.loader_kwargs
 
     # 可视化工具
     if config["vis"]["enabled"] or config["vis"]["store_grads"]:
@@ -66,7 +46,8 @@ def train(args, config_parser):
     model_name = config["model"]["name"]
     model = eval(model_name)(config["model"].copy()).to(device)
     if args.resume_runid:
-        model = load_model(args.resume_runid, model, device)
+        model_path = os.path.join("weights", args.resume_runid, "artifacts", "model", "data", "model.pth")
+        model = load_model(model_path, model, device)
     model.train()
 
     # 数据加载
@@ -146,11 +127,9 @@ def train(args, config_parser):
                 )
         avg_loss = epoch_loss / len(dataloader)
         print(f"\nEpoch {epoch+1:03d} finished. Avg Loss: {avg_loss:.6f}")
-        mlflow.log_metric("loss", avg_loss, step=epoch+1)
         if avg_loss < best_loss:
             save_model(model)
             best_loss = avg_loss
-    mlflow.end_run()
 
                      
 
@@ -159,12 +138,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         default="configs/train.yml",
-        help="config file, overwrites mlflow settings",
-    )
-    parser.add_argument(
-        "--path_mlflow",
-        default="http://localhost:5000",
-        help="location of the mlflow ui",
     )
     parser.add_argument(
         "--resume_runid",

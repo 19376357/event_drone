@@ -2,7 +2,7 @@ data:
     data_dir: datasets/test/
     num_bins: 2       # 体素编码的bin数
 model:
-    name: PLIFRecEVFlowNet # for other models available, see models/model.py SpikingRecEVFlowNet XLIFRecEVFlowNet
+    name: XLIFRecEVFlowNet # for other models available, see models/model.py SpikingRecEVFlowNet XLIFRecEVFlowNet
     encoding: cnt # voxel;cnt，同上
     round_encoding: False # for voxel encoding
     norm_input: False # normalize input
@@ -28,7 +28,7 @@ loss:
     overwrite_intermediate: False
 
 loader:
-    batch_size: 1
+    batch_size: 1  #必须为1
     resolution: [256, 256] # H x W
     augment: []
     gpu: 0
